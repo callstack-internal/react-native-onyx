@@ -39,6 +39,7 @@
     "prettier": "prettier --write ."
   },
   "dependencies": {
+    "@op-engineering/op-sqlite": "^5.0.5",
     "ascii-table": "0.0.9",
     "fast-equals": "^4.0.3",
     "underscore": "^1.13.6"
@@ -114,5 +115,14 @@
     "node": ">=20.14.0",
     "npm": ">=10.7.0"
   },
-  "sideEffects": false
+  "sideEffects": false,
+  "op-sqlite": {
+	  "sqlcipher": true,
+	  "crsqlite": true,
+	  "performanceMode": "1",
+	  "iosSqlite": false,
+	  "sqliteFlags": "-DSQLITE_DQS=0",
+	  "fts5": true,
+	  "libsql": true
+	}
 }
