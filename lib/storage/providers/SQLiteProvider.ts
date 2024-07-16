@@ -2,15 +2,16 @@
  * The SQLiteStorage provider stores everything in a key/value store by
  * converting the value to a JSON string
  */
-import type {BatchQueryResult, QuickSQLiteConnection} from 'react-native-quick-sqlite';
-import {open} from 'react-native-quick-sqlite';
 import {getFreeDiskStorage} from 'react-native-device-info';
+import {open} from '@op-engineering/op-sqlite';
+import type {BatchQueryResult, OPSQLiteConnection} from '@op-engineering/op-sqlite';
+import type {QueryResult} from 'react-native-quick-sqlite';
 import type StorageProvider from './types';
 import utils from '../../utils';
 import type {KeyList, KeyValuePairList} from './types';
 
 const DB_NAME = 'OnyxDB';
-let db: QuickSQLiteConnection;
+let db: OPSQLiteConnection;
 
 const provider: StorageProvider = {
     /**
@@ -50,7 +51,7 @@ const provider: StorageProvider = {
         });
     },
     setItem(key, value) {
-        return db.executeAsync('REPLACE INTO keyvaluepairs (record_key, valueJSON) VALUES (?, ?);', [key, JSON.stringify(value)]);
+        return db.executeAsync('REPLACE INTO keyvaluepairs (record_key, valueJSON) VALUES (?, ?);', [key, JSON.stringify(value)]) as Promise<QueryResult>;
     },
     multiSet(pairs) {
         const stringifiedPairs = pairs.map((pair) => [pair[0], JSON.stringify(pair[1] === undefined ? null : pair[1])]);
@@ -89,13 +90,13 @@ const provider: StorageProvider = {
             const result = rows?._array.map((row) => row.record_key);
             return (result ?? []) as KeyList;
         }),
-    removeItem: (key) => db.executeAsync('DELETE FROM keyvaluepairs WHERE record_key = ?;', [key]),
+    removeItem: (key) => db.executeAsync('DELETE FROM keyvaluepairs WHERE record_key = ?;', [key]) as Promise<QueryResult>,
     removeItems: (keys) => {
         const placeholders = keys.map(() => '?').join(',');
         const query = `DELETE FROM keyvaluepairs WHERE record_key IN (${placeholders});`;
-        return db.executeAsync(query, keys);
+        return db.executeAsync(query, keys) as Promise<QueryResult>;
     },
-    clear: () => db.executeAsync('DELETE FROM keyvaluepairs;', []),
+    clear: () => db.executeAsync('DELETE FROM keyvaluepairs;', []) as Promise<QueryResult>,
     getDatabaseSize() {
         return Promise.all([db.executeAsync('PRAGMA page_size;'), db.executeAsync('PRAGMA page_count;'), getFreeDiskStorage()]).then(([pageSizeResult, pageCountResult, bytesRemaining]) => {
             const pageSize: number = pageSizeResult.rows?.item(0).page_size;
