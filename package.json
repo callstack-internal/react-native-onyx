@@ -40,6 +40,7 @@
   },
   "dependencies": {
     "ascii-table": "0.0.9",
+    "dexie": "^4.0.8",
     "fast-equals": "^4.0.3",
     "underscore": "^1.13.6"
   },

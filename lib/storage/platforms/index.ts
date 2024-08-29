@@ -1,3 +1,3 @@
-import WebStorage from '../providers/IDBKeyValProvider';
+import WebStorage from '../providers/DexieProvider';
 
 export default WebStorage;
