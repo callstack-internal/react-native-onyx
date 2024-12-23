@@ -3,6 +3,7 @@ import type {BuiltIns} from 'type-fest/source/internal';
 import type OnyxUtils from './OnyxUtils';
 import type {WithOnyxInstance, WithOnyxState} from './withOnyx/types';
 import type {OnyxMethod} from './OnyxUtils';
+import type {SchemaDefinition} from './OnyxSchema';
 
 /**
  * Utility type that excludes `null` from the type `TValue`.
@@ -474,6 +475,10 @@ type InitOptions = {
      * @default false
      */
     enablePerformanceMetrics?: boolean;
+
+    schema?: Record<string, SchemaDefinition>;
+
+    onSchemaError?: (key: string, value: unknown, error: string) => void;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

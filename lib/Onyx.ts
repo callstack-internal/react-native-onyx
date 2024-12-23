@@ -34,6 +34,18 @@ import type {Connection} from './OnyxConnectionManager';
 import connectionManager from './OnyxConnectionManager';
 import * as GlobalSettings from './GlobalSettings';
 import decorateWithMetrics from './metrics';
+import {SchemaValidator} from './OnyxSchema';
+
+let schemaValidator: SchemaValidator<any> | null = null;
+
+function validateKeyValue(key: string, value: unknown): void {
+    if (!schemaValidator) return;
+
+    const result = schemaValidator.validate(key, value);
+    if (!result.isValid) {
+        throw new Error(`Schema validation failed: ${result.error}`);
+    }
+}
 
 /** Initialize the store with actions and listening for storage events */
 function init({
@@ -44,7 +56,16 @@ function init({
     shouldSyncMultipleInstances = Boolean(global.localStorage),
     debugSetState = false,
     enablePerformanceMetrics = false,
+    schema,
+    onSchemaError,
 }: InitOptions): void {
+    if (schema) {
+        schemaValidator = new SchemaValidator({
+            schema,
+            onSchemaError,
+        });
+    }
+
     if (enablePerformanceMetrics) {
         GlobalSettings.setPerformanceMetricsEnabled(true);
         applyDecorators();
@@ -128,6 +149,7 @@ function disconnect(connection: Connection): void {
  * @param value value to store
  */
 function set<TKey extends OnyxKey>(key: TKey, value: OnyxSetInput<TKey>): Promise<void> {
+    validateKeyValue(key, value);
     // When we use Onyx.set to set a key we want to clear the current delta changes from Onyx.merge that were queued
     // before the value was set. If Onyx.merge is currently reading the old value from storage, it will then not apply the changes.
     if (OnyxUtils.hasPendingMergeForKey(key)) {
@@ -232,6 +254,7 @@ function multiSet(data: OnyxMultiSetInput): Promise<void> {
  * Onyx.merge(ONYXKEYS.POLICY, {name: 'My Workspace'}); // -> {id: 1, name: 'My Workspace'}
  */
 function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): Promise<void> {
+    validateKeyValue(key, changes);
     const mergeQueue = OnyxUtils.getMergeQueue();
     const mergeQueuePromise = OnyxUtils.getMergeQueuePromise();
 
@@ -323,7 +346,6 @@ function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): 
             return Promise.resolve();
         }
     });
-
     return mergeQueuePromise[key];
 }
 
