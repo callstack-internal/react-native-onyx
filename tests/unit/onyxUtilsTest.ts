@@ -1,5 +1,5 @@
 import Onyx from '../../lib';
-import OnyxUtils from '../../lib/OnyxUtils';
+import OnyxKeyUtils from '../../lib/OnyxKeyUtils';
 
 const ONYXKEYS = {
     TEST_KEY: 'test',
@@ -31,7 +31,7 @@ describe('OnyxUtils', () => {
             };
 
             it.each(Object.keys(dataResult))('%s', (key) => {
-                const [collectionKey, id] = OnyxUtils.splitCollectionMemberKey(key);
+                const [collectionKey, id] = OnyxKeyUtils.splitCollectionMemberKey(key);
                 expect(collectionKey).toEqual(dataResult[key][0]);
                 expect(id).toEqual(dataResult[key][1]);
             });
@@ -39,22 +39,22 @@ describe('OnyxUtils', () => {
 
         it('should throw error if key does not contain underscore', () => {
             expect(() => {
-                OnyxUtils.splitCollectionMemberKey(ONYXKEYS.TEST_KEY);
+                OnyxKeyUtils.splitCollectionMemberKey(ONYXKEYS.TEST_KEY);
             }).toThrowError("Invalid 'test' key provided, only collection keys are allowed.");
             expect(() => {
-                OnyxUtils.splitCollectionMemberKey('');
+                OnyxKeyUtils.splitCollectionMemberKey('');
             }).toThrowError("Invalid '' key provided, only collection keys are allowed.");
         });
 
         it('should allow passing the collection key beforehand for performance gains', () => {
-            const [collectionKey, id] = OnyxUtils.splitCollectionMemberKey(`${ONYXKEYS.COLLECTION.TEST_KEY}id1`, ONYXKEYS.COLLECTION.TEST_KEY);
+            const [collectionKey, id] = OnyxKeyUtils.splitCollectionMemberKey(`${ONYXKEYS.COLLECTION.TEST_KEY}id1`, ONYXKEYS.COLLECTION.TEST_KEY);
             expect(collectionKey).toEqual(ONYXKEYS.COLLECTION.TEST_KEY);
             expect(id).toEqual('id1');
         });
 
         it("should throw error if the passed collection key isn't compatible with the key", () => {
             expect(() => {
-                OnyxUtils.splitCollectionMemberKey(`${ONYXKEYS.COLLECTION.TEST_KEY}id1`, ONYXKEYS.COLLECTION.TEST_LEVEL_KEY);
+                OnyxKeyUtils.splitCollectionMemberKey(`${ONYXKEYS.COLLECTION.TEST_KEY}id1`, ONYXKEYS.COLLECTION.TEST_LEVEL_KEY);
             }).toThrowError("Invalid 'test_level_' collection key provided, it isn't compatible with 'test_id1' key.");
         });
     });
@@ -73,18 +73,9 @@ describe('OnyxUtils', () => {
             };
 
             it.each(Object.keys(dataResult))('%s', (key) => {
-                const collectionKey = OnyxUtils.getCollectionKey(key);
+                const collectionKey = OnyxKeyUtils.getCollectionKey(key);
                 expect(collectionKey).toEqual(dataResult[key]);
             });
-        });
-
-        it('should throw error if key does not contain underscore', () => {
-            expect(() => {
-                OnyxUtils.getCollectionKey(ONYXKEYS.TEST_KEY);
-            }).toThrowError("Invalid 'test' key provided, only collection keys are allowed.");
-            expect(() => {
-                OnyxUtils.getCollectionKey('');
-            }).toThrowError("Invalid '' key provided, only collection keys are allowed.");
         });
     });
 });

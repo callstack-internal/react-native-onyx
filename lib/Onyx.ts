@@ -33,6 +33,7 @@ import type {Connection} from './OnyxConnectionManager';
 import connectionManager from './OnyxConnectionManager';
 import * as GlobalSettings from './GlobalSettings';
 import decorateWithMetrics from './metrics';
+import OnyxKeyUtils from './OnyxKeyUtils';
 
 /** Initialize the store with actions and listening for storage events */
 function init({
@@ -73,9 +74,7 @@ function init({
     OnyxUtils.initStoreValues(keys, initialKeyStates, evictableKeys);
 
     // Initialize all of our keys with data provided then give green light to any pending connections
-    Promise.all([cache.addEvictableKeysToRecentlyAccessedList(OnyxUtils.isCollectionKey, OnyxUtils.getAllKeys), OnyxUtils.initializeWithDefaultKeyStates()]).then(
-        OnyxUtils.getDeferredInitTask().resolve,
-    );
+    Promise.all([cache.addEvictableKeysToRecentlyAccessedList(OnyxUtils.getAllKeys), OnyxUtils.initializeWithDefaultKeyStates()]).then(OnyxUtils.getDeferredInitTask().resolve);
 }
 
 /**
@@ -141,7 +140,7 @@ function set<TKey extends OnyxKey>(key: TKey, value: OnyxSetInput<TKey>): Promis
     const skippableCollectionMemberIDs = OnyxUtils.getSkippableCollectionMemberIDs();
     if (skippableCollectionMemberIDs.size) {
         try {
-            const [, collectionMemberID] = OnyxUtils.splitCollectionMemberKey(key);
+            const [, collectionMemberID] = OnyxKeyUtils.splitCollectionMemberKey(key);
             if (skippableCollectionMemberIDs.has(collectionMemberID)) {
                 // The key is a skippable one, so we set the new value to null.
                 // eslint-disable-next-line no-param-reassign
@@ -220,7 +219,7 @@ function multiSet(data: OnyxMultiSetInput): Promise<void> {
     if (skippableCollectionMemberIDs.size) {
         newData = Object.keys(newData).reduce((result: OnyxMultiSetInput, key) => {
             try {
-                const [, collectionMemberID] = OnyxUtils.splitCollectionMemberKey(key);
+                const [, collectionMemberID] = OnyxKeyUtils.splitCollectionMemberKey(key);
                 // If the collection member key is a skippable one we set its value to null.
                 // eslint-disable-next-line no-param-reassign
                 result[key] = !skippableCollectionMemberIDs.has(collectionMemberID) ? newData[key] : null;
@@ -273,7 +272,7 @@ function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): 
     const skippableCollectionMemberIDs = OnyxUtils.getSkippableCollectionMemberIDs();
     if (skippableCollectionMemberIDs.size) {
         try {
-            const [, collectionMemberID] = OnyxUtils.splitCollectionMemberKey(key);
+            const [, collectionMemberID] = OnyxKeyUtils.splitCollectionMemberKey(key);
             if (skippableCollectionMemberIDs.has(collectionMemberID)) {
                 // The key is a skippable one, so we set the new changes to undefined.
                 // eslint-disable-next-line no-param-reassign
@@ -410,7 +409,7 @@ function mergeCollection<TKey extends CollectionKeyBase, TMap>(collectionKey: TK
     if (skippableCollectionMemberIDs.size) {
         resultCollection = resultCollectionKeys.reduce((result: OnyxInputKeyValueMapping, key) => {
             try {
-                const [, collectionMemberID] = OnyxUtils.splitCollectionMemberKey(key, collectionKey);
+                const [, collectionMemberID] = OnyxKeyUtils.splitCollectionMemberKey(key, collectionKey);
                 // If the collection member key is a skippable one we set its value to null.
                 // eslint-disable-next-line no-param-reassign
                 result[key] = !skippableCollectionMemberIDs.has(collectionMemberID) ? resultCollection[key] : null;
@@ -561,7 +560,7 @@ function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
 
                         let collectionKey: string | undefined;
                         try {
-                            collectionKey = OnyxUtils.getCollectionKey(key);
+                            collectionKey = OnyxKeyUtils.getCollectionKey(key);
                         } catch (e) {
                             // If getCollectionKey() throws an error it means the key is not a collection key.
                             collectionKey = undefined;
@@ -697,8 +696,8 @@ function update(data: OnyxUpdate[]): Promise<void> {
     // Group all the collection-related keys and update each collection in a single `mergeCollection` call.
     // This is needed to prevent multiple `mergeCollection` calls for the same collection and `merge` calls for the individual items of the said collection.
     // This way, we ensure there is no race condition in the queued updates of the same key.
-    OnyxUtils.getCollectionKeys().forEach((collectionKey) => {
-        const collectionItemKeys = Object.keys(updateQueue).filter((key) => OnyxUtils.isKeyMatch(collectionKey, key));
+    OnyxKeyUtils.getCollectionKeys().forEach((collectionKey) => {
+        const collectionItemKeys = Object.keys(updateQueue).filter((key) => OnyxKeyUtils.isKeyMatch(collectionKey, key));
         if (collectionItemKeys.length <= 1) {
             // If there are no items of this collection in the updateQueue, we should skip it.
             // If there is only one item, we should update it individually, therefore retain it in the updateQueue.
@@ -781,7 +780,7 @@ function setCollection<TKey extends CollectionKeyBase, TMap>(collectionKey: TKey
     if (skippableCollectionMemberIDs.size) {
         resultCollection = resultCollectionKeys.reduce((result: OnyxInputKeyValueMapping, key) => {
             try {
-                const [, collectionMemberID] = OnyxUtils.splitCollectionMemberKey(key, collectionKey);
+                const [, collectionMemberID] = OnyxKeyUtils.splitCollectionMemberKey(key, collectionKey);
                 // If the collection member key is a skippable one we set its value to null.
                 // eslint-disable-next-line no-param-reassign
                 result[key] = !skippableCollectionMemberIDs.has(collectionMemberID) ? resultCollection[key] : null;

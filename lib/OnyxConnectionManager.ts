@@ -6,6 +6,7 @@ import * as Str from './Str';
 import type {CollectionConnectCallback, DefaultConnectCallback, DefaultConnectOptions, OnyxKey, OnyxValue} from './types';
 import utils from './utils';
 import cache from './OnyxCache';
+import OnyxKeyUtils from './OnyxKeyUtils';
 
 type ConnectCallback = DefaultConnectCallback<OnyxKey> | CollectionConnectCallback<OnyxKey>;
 
@@ -130,7 +131,7 @@ class OnyxConnectionManager {
         if (
             reuseConnection === false ||
             initWithStoredValues === false ||
-            (!utils.hasWithOnyxInstance(connectOptions) && OnyxUtils.isCollectionKey(key) && (waitForCollectionCallback === undefined || waitForCollectionCallback === false)) ||
+            (!utils.hasWithOnyxInstance(connectOptions) && OnyxKeyUtils.isCollectionKey(key) && (waitForCollectionCallback === undefined || waitForCollectionCallback === false)) ||
             utils.hasWithOnyxInstance(connectOptions)
         ) {
             suffix += `,uniqueID=${Str.guid()}`;

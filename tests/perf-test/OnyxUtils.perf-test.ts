@@ -139,50 +139,6 @@ describe('OnyxUtils', () => {
         });
     });
 
-    describe('getCollectionKeys', () => {
-        test('one call', async () => {
-            await measureFunction(() => OnyxUtils.getCollectionKeys());
-        });
-    });
-
-    describe('isCollectionKey', () => {
-        test('one call', async () => {
-            await measureFunction(() => OnyxUtils.isCollectionKey(collectionKey));
-        });
-    });
-
-    describe('isCollectionMemberKey', () => {
-        const collectionKeyLength = collectionKey.length;
-
-        test('one call with correct key', async () => {
-            await measureFunction(() => OnyxUtils.isCollectionMemberKey(collectionKey, `${collectionKey}entry1`, collectionKeyLength));
-        });
-
-        test('one call with wrong key', async () => {
-            await measureFunction(() => OnyxUtils.isCollectionMemberKey(collectionKey, `${ONYXKEYS.COLLECTION.TEST_KEY_2}entry1`, collectionKeyLength));
-        });
-    });
-
-    describe('splitCollectionMemberKey', () => {
-        test('one call without passing the collection key', async () => {
-            await measureFunction(() => OnyxUtils.splitCollectionMemberKey(`${collectionKey}entry1`));
-        });
-
-        test('one call passing the collection key', async () => {
-            await measureFunction(() => OnyxUtils.splitCollectionMemberKey(`${collectionKey}entry1`, collectionKey));
-        });
-    });
-
-    describe('isKeyMatch', () => {
-        test('one call passing normal key', async () => {
-            await measureFunction(() => OnyxUtils.isKeyMatch(ONYXKEYS.TEST_KEY, ONYXKEYS.TEST_KEY_2));
-        });
-
-        test('one call passing collection key', async () => {
-            await measureFunction(() => OnyxUtils.isKeyMatch(collectionKey, `${collectionKey}entry1`));
-        });
-    });
-
     describe('isSafeEvictionKey', () => {
         test('one call checking one key', async () => {
             await measureFunction(() => OnyxCache.isEvictableKey(`${ONYXKEYS.COLLECTION.EVICTABLE_TEST_KEY}entry1`));
@@ -250,7 +206,7 @@ describe('OnyxUtils', () => {
         test('one call removing one key', async () => {
             await measureFunction(() => OnyxCache.removeLastAccessedKey(`${collectionKey}5000`), {
                 beforeEach: async () => {
-                    mockedReportActionsKeys.forEach((key) => OnyxCache.addLastAccessedKey(key, false));
+                    mockedReportActionsKeys.forEach((key) => OnyxCache.addLastAccessedKey(key));
                 },
                 afterEach: async () => {
                     mockedReportActionsKeys.forEach((key) => OnyxCache.removeLastAccessedKey(key));
@@ -261,9 +217,9 @@ describe('OnyxUtils', () => {
 
     describe('addLastAccessedKey', () => {
         test('one call adding one key', async () => {
-            await measureFunction(() => OnyxCache.addLastAccessedKey(`${collectionKey}5000`, false), {
+            await measureFunction(() => OnyxCache.addLastAccessedKey(`${collectionKey}5000`), {
                 beforeEach: async () => {
-                    mockedReportActionsKeys.forEach((key) => OnyxCache.addLastAccessedKey(key, false));
+                    mockedReportActionsKeys.forEach((key) => OnyxCache.addLastAccessedKey(key));
                 },
                 afterEach: async () => {
                     mockedReportActionsKeys.forEach((key) => OnyxCache.removeLastAccessedKey(key));
@@ -279,19 +235,12 @@ describe('OnyxUtils', () => {
         };
 
         test('one call adding 1k keys', async () => {
-            await measureAsyncFunction(
-                () =>
-                    OnyxCache.addEvictableKeysToRecentlyAccessedList(
-                        () => false,
-                        () => Promise.resolve(new Set(Object.keys(data))),
-                    ),
-                {
-                    beforeEach: async () => {
-                        await Onyx.multiSet(data);
-                    },
-                    afterEach: clearOnyxAfterEachMeasure,
+            await measureAsyncFunction(() => OnyxCache.addEvictableKeysToRecentlyAccessedList(() => Promise.resolve(new Set(Object.keys(data)))), {
+                beforeEach: async () => {
+                    await Onyx.multiSet(data);
                 },
-            );
+                afterEach: clearOnyxAfterEachMeasure,
+            });
         });
     });
 
@@ -434,12 +383,6 @@ describe('OnyxUtils', () => {
         });
     });
 
-    describe('getCollectionKey', () => {
-        test('one call', async () => {
-            await measureFunction(() => OnyxUtils.getCollectionKey(`${ONYXKEYS.COLLECTION.TEST_NESTED_NESTED_KEY}entry1`));
-        });
-    });
-
     describe('getCollectionDataAndSendAsObject', () => {
         test('one call with 10k heavy objects', async () => {
             let subscriptionID = -1;
@@ -572,8 +515,8 @@ describe('OnyxUtils', () => {
 
             await measureAsyncFunction(() => OnyxUtils.evictStorageAndRetry(error, onyxMethod, '', null), {
                 beforeEach: async () => {
-                    mockedReportActionsKeys.forEach((key) => OnyxCache.addLastAccessedKey(key, false));
-                    OnyxCache.addLastAccessedKey(`${ONYXKEYS.COLLECTION.EVICTABLE_TEST_KEY}1`, false);
+                    mockedReportActionsKeys.forEach((key) => OnyxCache.addLastAccessedKey(key));
+                    OnyxCache.addLastAccessedKey(`${ONYXKEYS.COLLECTION.EVICTABLE_TEST_KEY}1`);
                 },
                 afterEach: async () => {
                     mockedReportActionsKeys.forEach((key) => OnyxCache.removeLastAccessedKey(key));

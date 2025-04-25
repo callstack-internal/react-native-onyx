@@ -3,7 +3,7 @@ import bindAll from 'lodash/bindAll';
 import type {ValueOf} from 'type-fest';
 import utils from './utils';
 import type {OnyxKey, OnyxValue} from './types';
-import * as Str from './Str';
+import OnyxKeyUtils from './OnyxKeyUtils';
 
 // Task constants
 const TASK = {
@@ -295,17 +295,7 @@ class OnyxCache {
      * @param testKey - Key to check
      */
     isEvictableKey(testKey: OnyxKey): boolean {
-        return this.evictionAllowList.some((key) => this.isKeyMatch(key, testKey));
-    }
-
-    /**
-     * Check if a given key matches a pattern key
-     * @param configKey - Pattern that may contain a wildcard
-     * @param key - Key to test against the pattern
-     */
-    private isKeyMatch(configKey: OnyxKey, key: OnyxKey): boolean {
-        const isCollectionKey = configKey.endsWith('_');
-        return isCollectionKey ? Str.startsWith(key, configKey) : configKey === key;
+        return this.evictionAllowList.some((key) => OnyxKeyUtils.isKeyMatch(key, testKey));
     }
 
     /**
@@ -320,9 +310,9 @@ class OnyxCache {
      * recently accessed key should be at the head and the most
      * recently accessed key at the tail.
      */
-    addLastAccessedKey(key: OnyxKey, isCollectionKey: boolean): void {
+    addLastAccessedKey(key: OnyxKey): void {
         // Only specific keys belong in this list since we cannot remove an entire collection.
-        if (isCollectionKey || !this.isEvictableKey(key)) {
+        if (OnyxKeyUtils.isCollectionKey(key) || !this.isEvictableKey(key)) {
             return;
         }
 
@@ -338,15 +328,15 @@ class OnyxCache {
      * @param isCollectionKeyFn - Function to determine if a key is a collection key
      * @param getAllKeysFn - Function to get all keys, defaults to Storage.getAllKeys
      */
-    addEvictableKeysToRecentlyAccessedList(isCollectionKeyFn: (key: OnyxKey) => boolean, getAllKeysFn: () => Promise<Set<OnyxKey>>): Promise<void> {
+    addEvictableKeysToRecentlyAccessedList(getAllKeysFn: () => Promise<Set<OnyxKey>>): Promise<void> {
         return getAllKeysFn().then((keys: Set<OnyxKey>) => {
             this.evictionAllowList.forEach((evictableKey) => {
                 keys.forEach((key: OnyxKey) => {
-                    if (!this.isKeyMatch(evictableKey, key)) {
+                    if (!OnyxKeyUtils.isKeyMatch(evictableKey, key)) {
                         return;
                     }
 
-                    this.addLastAccessedKey(key, isCollectionKeyFn(key));
+                    this.addLastAccessedKey(key);
                 });
             });
         });

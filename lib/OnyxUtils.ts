@@ -11,8 +11,8 @@ import * as PerformanceUtils from './PerformanceUtils';
 import * as Str from './Str';
 import unstable_batchedUpdates from './batch';
 import Storage from './storage';
+import OnyxKeyUtils from './OnyxKeyUtils';
 import type {
-    CollectionKey,
     CollectionKeyBase,
     ConnectOptions,
     DeepRecord,
@@ -143,6 +143,9 @@ function initStoreValues(keys: DeepRecord<string, OnyxKey>, initialKeyStates: Pa
         return acc;
     }, new Set<OnyxKey>());
 
+    // Update the collection key set in OnyxKeyUtils
+    OnyxKeyUtils.setCollectionKeySet(onyxCollectionKeySet);
+
     // Set our default key states to use when initializing and clearing Onyx data
     defaultKeyStates = initialKeyStates;
 
@@ -259,7 +262,7 @@ function get<TKey extends OnyxKey, TValue extends OnyxValue<TKey>>(key: TKey): P
         .then((val) => {
             if (skippableCollectionMemberIDs.size) {
                 try {
-                    const [, collectionMemberID] = splitCollectionMemberKey(key);
+                    const [, collectionMemberID] = OnyxKeyUtils.splitCollectionMemberKey(key);
                     if (skippableCollectionMemberIDs.has(collectionMemberID)) {
                         // The key is a skippable one, so we set the value to undefined.
                         // eslint-disable-next-line no-param-reassign
@@ -350,7 +353,7 @@ function multiGet<TKey extends OnyxKey>(keys: CollectionKeyBase[]): Promise<Map<
                 values.forEach(([key, value]) => {
                     if (skippableCollectionMemberIDs.size) {
                         try {
-                            const [, collectionMemberID] = OnyxUtils.splitCollectionMemberKey(key);
+                            const [, collectionMemberID] = OnyxKeyUtils.splitCollectionMemberKey(key);
                             if (skippableCollectionMemberIDs.has(collectionMemberID)) {
                                 // The key is a skippable one, so we skip this iteration.
                                 return;
@@ -433,96 +436,13 @@ function getAllKeys(): Promise<Set<OnyxKey>> {
 }
 
 /**
- * Returns set of all registered collection keys
- */
-function getCollectionKeys(): Set<OnyxKey> {
-    return onyxCollectionKeySet;
-}
-
-/**
- * Checks to see if the subscriber's supplied key
- * is associated with a collection of keys.
- */
-function isCollectionKey(key: OnyxKey): key is CollectionKeyBase {
-    return onyxCollectionKeySet.has(key);
-}
-
-function isCollectionMemberKey<TCollectionKey extends CollectionKeyBase>(collectionKey: TCollectionKey, key: string, collectionKeyLength: number): key is `${TCollectionKey}${string}` {
-    return key.startsWith(collectionKey) && key.length > collectionKeyLength;
-}
-
-/**
- * Splits a collection member key into the collection key part and the ID part.
- * @param key - The collection member key to split.
- * @param collectionKey - The collection key of the `key` param that can be passed in advance to optimize the function.
- * @returns A tuple where the first element is the collection part and the second element is the ID part,
- * or throws an Error if the key is not a collection one.
- */
-function splitCollectionMemberKey<TKey extends CollectionKey, CollectionKeyType = TKey extends `${infer Prefix}_${string}` ? `${Prefix}_` : never>(
-    key: TKey,
-    collectionKey?: string,
-): [CollectionKeyType, string] {
-    if (collectionKey && !isCollectionMemberKey(collectionKey, key, collectionKey.length)) {
-        throw new Error(`Invalid '${collectionKey}' collection key provided, it isn't compatible with '${key}' key.`);
-    }
-
-    if (!collectionKey) {
-        // eslint-disable-next-line no-param-reassign
-        collectionKey = getCollectionKey(key);
-    }
-
-    return [collectionKey as CollectionKeyType, key.slice(collectionKey.length)];
-}
-
-/**
- * Checks to see if a provided key is the exact configured key of our connected subscriber
- * or if the provided key is a collection member key (in case our configured key is a "collection key")
- */
-function isKeyMatch(configKey: OnyxKey, key: OnyxKey): boolean {
-    return isCollectionKey(configKey) ? Str.startsWith(key, configKey) : configKey === key;
-}
-
-/**
- * Extracts the collection identifier of a given collection member key.
- *
- * For example:
- * - `getCollectionKey("report_123")` would return "report_"
- * - `getCollectionKey("report_")` would return "report_"
- * - `getCollectionKey("report_-1_something")` would return "report_"
- * - `getCollectionKey("sharedNVP_user_-1_something")` would return "sharedNVP_user_"
- *
- * @param key - The collection key to process.
- * @returns The plain collection key or throws an Error if the key is not a collection one.
- */
-function getCollectionKey(key: CollectionKey): string {
-    // Start by finding the position of the last underscore in the string
-    let lastUnderscoreIndex = key.lastIndexOf('_');
-
-    // Iterate backwards to find the longest key that ends with '_'
-    while (lastUnderscoreIndex > 0) {
-        const possibleKey = key.slice(0, lastUnderscoreIndex + 1);
-
-        // Check if the substring is a key in the Set
-        if (isCollectionKey(possibleKey)) {
-            // Return the matching key and the rest of the string
-            return possibleKey;
-        }
-
-        // Move to the next underscore to check smaller possible keys
-        lastUnderscoreIndex = key.lastIndexOf('_', lastUnderscoreIndex - 1);
-    }
-
-    throw new Error(`Invalid '${key}' key provided, only collection keys are allowed.`);
-}
-
-/**
  * Tries to get a value from the cache. If the value is not present in cache it will return the default value or undefined.
  * If the requested key is a collection, it will return an object with all the collection members.
  */
 function tryGetCachedValue<TKey extends OnyxKey>(key: TKey, mapping?: Partial<Mapping<TKey>>): OnyxValue<OnyxKey> {
     let val = cache.get(key);
 
-    if (isCollectionKey(key)) {
+    if (OnyxKeyUtils.isCollectionKey(key)) {
         const allCacheKeys = cache.getAllKeys();
 
         // It is possible we haven't loaded all keys yet so we do not know if the
@@ -544,7 +464,7 @@ function tryGetCachedValue<TKey extends OnyxKey>(key: TKey, mapping?: Partial<Ma
 
     if (mapping?.selector) {
         const state = mapping.withOnyxInstance ? mapping.withOnyxInstance.state : undefined;
-        if (isCollectionKey(key)) {
+        if (OnyxKeyUtils.isCollectionKey(key)) {
             return reduceCollectionWithSelector(val as OnyxCollection<KeyValueMapping[TKey]>, mapping.selector, state);
         }
         return mapping.selector(val, state);
@@ -564,7 +484,7 @@ function getCachedCollection<TKey extends CollectionKeyBase>(collectionKey: TKey
         // If we don't have collectionMemberKeys array then we have to check whether a key is a collection member key.
         // Because in that case the keys will be coming from `cache.getAllKeys()` and we need to filter out the keys that
         // are not part of the collection.
-        if (!collectionMemberKeys && !isCollectionMemberKey(collectionKey, key, collectionKeyLength)) {
+        if (!collectionMemberKeys && !OnyxKeyUtils.isCollectionMemberKey(collectionKey, key, collectionKeyLength)) {
             return;
         }
 
@@ -621,7 +541,7 @@ function keysChanged<TKey extends CollectionKeyBase>(
         /**
          * e.g. Onyx.connect({key: `${ONYXKEYS.COLLECTION.REPORT}{reportID}`, callback: ...});
          */
-        const isSubscribedToCollectionMemberKey = isCollectionMemberKey(collectionKey, subscriber.key, collectionKeyLength);
+        const isSubscribedToCollectionMemberKey = OnyxKeyUtils.isCollectionMemberKey(collectionKey, subscriber.key, collectionKeyLength);
 
         // Regular Onyx.connect() subscriber found.
         if (typeof subscriber.callback === 'function') {
@@ -786,7 +706,7 @@ function keyChanged<TKey extends OnyxKey>(
 ): void {
     // Add or remove this key from the recentlyAccessedKeys lists
     if (value !== null) {
-        cache.addLastAccessedKey(key, isCollectionKey(key));
+        cache.addLastAccessedKey(key);
     } else {
         cache.removeLastAccessedKey(key);
     }
@@ -800,7 +720,7 @@ function keyChanged<TKey extends OnyxKey>(
     let stateMappingKeys = onyxKeyToSubscriptionIDs.get(key) ?? [];
     let collectionKey: string | undefined;
     try {
-        collectionKey = getCollectionKey(key);
+        collectionKey = OnyxKeyUtils.getCollectionKey(key);
     } catch (e) {
         // If getCollectionKey() throws an error it means the key is not a collection key.
         collectionKey = undefined;
@@ -818,7 +738,7 @@ function keyChanged<TKey extends OnyxKey>(
 
     for (const stateMappingKey of stateMappingKeys) {
         const subscriber = callbackToStateMapping[stateMappingKey];
-        if (!subscriber || !isKeyMatch(subscriber.key, key) || !canUpdateSubscriber(subscriber)) {
+        if (!subscriber || !OnyxKeyUtils.isKeyMatch(subscriber.key, key) || !canUpdateSubscriber(subscriber)) {
             continue;
         }
 
@@ -831,7 +751,7 @@ function keyChanged<TKey extends OnyxKey>(
                 continue;
             }
 
-            if (isCollectionKey(subscriber.key) && subscriber.waitForCollectionCallback) {
+            if (OnyxKeyUtils.isCollectionKey(subscriber.key) && subscriber.waitForCollectionCallback) {
                 let cachedCollection = cachedCollections[subscriber.key];
 
                 if (!cachedCollection) {
@@ -859,7 +779,7 @@ function keyChanged<TKey extends OnyxKey>(
 
             const selector = subscriber.selector;
             // Check if we are subscribing to a collection key and overwrite the collection member key value in state
-            if (isCollectionKey(subscriber.key)) {
+            if (OnyxKeyUtils.isCollectionKey(subscriber.key)) {
                 // If the subscriber has a selector, then the consumer of this data must only be given the data
                 // returned by the selector and only when the selected data has changed.
                 if (selector) {
@@ -964,7 +884,7 @@ function sendDataToConnection<TKey extends OnyxKey>(mapping: Mapping<TKey>, valu
         // If the mapping has a selector, then the component's state must only be updated with the data
         // returned by the selector.
         if (mapping.selector) {
-            if (isCollectionKey(mapping.key)) {
+            if (OnyxKeyUtils.isCollectionKey(mapping.key)) {
                 newData = reduceCollectionWithSelector(value as OnyxCollection<KeyValueMapping[TKey]>, mapping.selector, mapping.withOnyxInstance.state);
             } else {
                 newData = mapping.selector(value, mapping.withOnyxInstance.state);
@@ -1013,13 +933,13 @@ function addKeyToRecentlyAccessedIfNeeded<TKey extends OnyxKey>(mapping: Mapping
     // Try to free some cache whenever we connect to a safe eviction key
     cache.removeLeastRecentlyUsedKeys();
 
-    if (utils.hasWithOnyxInstance(mapping) && !isCollectionKey(mapping.key)) {
+    if (utils.hasWithOnyxInstance(mapping) && !OnyxKeyUtils.isCollectionKey(mapping.key)) {
         // All React components subscribing to a key flagged as a safe eviction key must implement the canEvict property.
         if (mapping.canEvict === undefined) {
             throw new Error(`Cannot subscribe to safe eviction key '${mapping.key}' without providing a canEvict value.`);
         }
 
-        cache.addLastAccessedKey(mapping.key, isCollectionKey(mapping.key));
+        cache.addLastAccessedKey(mapping.key);
     }
 }
 
@@ -1241,7 +1161,7 @@ function isValidNonEmptyCollectionForMerge<TKey extends CollectionKeyBase, TMap>
 function doAllCollectionItemsBelongToSameParent<TKey extends CollectionKeyBase>(collectionKey: TKey, collectionKeys: string[]): boolean {
     let hasCollectionKeyCheckFailed = false;
     collectionKeys.forEach((dataKey) => {
-        if (isKeyMatch(collectionKey, dataKey)) {
+        if (OnyxKeyUtils.isKeyMatch(collectionKey, dataKey)) {
             return;
         }
 
@@ -1284,7 +1204,7 @@ function subscribeToKey<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKe
             // Performance improvement
             // If the mapping is connected to an onyx key that is not a collection
             // we can skip the call to getAllKeys() and return an array with a single item
-            if (!!mapping.key && typeof mapping.key === 'string' && !isCollectionKey(mapping.key) && cache.getAllKeys().has(mapping.key)) {
+            if (!!mapping.key && typeof mapping.key === 'string' && !OnyxKeyUtils.isCollectionKey(mapping.key) && cache.getAllKeys().has(mapping.key)) {
                 return new Set([mapping.key]);
             }
             return getAllKeys();
@@ -1295,7 +1215,7 @@ function subscribeToKey<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKe
             // subscribed to a "collection key" or a single key.
             const matchingKeys: string[] = [];
             keys.forEach((key) => {
-                if (!isKeyMatch(mapping.key, key)) {
+                if (!OnyxKeyUtils.isKeyMatch(mapping.key, key)) {
                     return;
                 }
                 matchingKeys.push(key);
@@ -1305,7 +1225,7 @@ function subscribeToKey<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKe
             // since there are none matched. In withOnyx() we wait for all connected keys to return a value before rendering the child
             // component. This null value will be filtered out so that the connected component can utilize defaultProps.
             if (matchingKeys.length === 0) {
-                if (mapping.key && !isCollectionKey(mapping.key)) {
+                if (mapping.key && !OnyxKeyUtils.isCollectionKey(mapping.key)) {
                     cache.addNullishStorageKey(mapping.key);
                 }
 
@@ -1319,7 +1239,7 @@ function subscribeToKey<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKe
             // into an object and just make a single call. The latter behavior is enabled by providing a waitForCollectionCallback key
             // combined with a subscription to a collection key.
             if (typeof mapping.callback === 'function') {
-                if (isCollectionKey(mapping.key)) {
+                if (OnyxKeyUtils.isCollectionKey(mapping.key)) {
                     if (mapping.waitForCollectionCallback) {
                         getCollectionDataAndSendAsObject(matchingKeys, mapping);
                         return;
@@ -1342,7 +1262,7 @@ function subscribeToKey<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKe
             // If we have a withOnyxInstance that means a React component has subscribed via the withOnyx() HOC and we need to
             // group collection key member data into an object.
             if (utils.hasWithOnyxInstance(mapping)) {
-                if (isCollectionKey(mapping.key)) {
+                if (OnyxKeyUtils.isCollectionKey(mapping.key)) {
                     getCollectionDataAndSendAsObject(matchingKeys, mapping);
                     return;
                 }
@@ -1393,7 +1313,7 @@ function updateSnapshots(data: OnyxUpdate[], mergeFn: typeof Onyx.merge): Array<
 
         data.forEach(({key, value}) => {
             // snapshots are normal keys so we want to skip update if they are written to Onyx
-            if (OnyxUtils.isCollectionMemberKey(snapshotCollectionKey, key, snapshotCollectionKeyLength)) {
+            if (OnyxKeyUtils.isCollectionMemberKey(snapshotCollectionKey, key, snapshotCollectionKeyLength)) {
                 return;
             }
 
@@ -1445,17 +1365,11 @@ const OnyxUtils = {
     batchUpdates,
     get,
     getAllKeys,
-    getCollectionKeys,
-    isCollectionKey,
-    isCollectionMemberKey,
-    splitCollectionMemberKey,
-    isKeyMatch,
     tryGetCachedValue,
     getCachedCollection,
     keysChanged,
     keyChanged,
     sendDataToConnection,
-    getCollectionKey,
     getCollectionDataAndSendAsObject,
     scheduleSubscriberUpdate,
     scheduleNotifyCollectionSubscribers,

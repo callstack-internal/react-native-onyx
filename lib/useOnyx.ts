@@ -11,6 +11,7 @@ import useLiveRef from './useLiveRef';
 import usePrevious from './usePrevious';
 import decorateWithMetrics from './metrics';
 import * as Logger from './Logger';
+import OnyxKeyUtils from './OnyxKeyUtils';
 
 type BaseUseOnyxOptions = {
     /**
@@ -84,7 +85,7 @@ type UseOnyxResult<TValue> = [NonNullable<TValue> | undefined, ResultMetadata<TV
  * It is a fork of `tryGetCachedValue` from `OnyxUtils` caused by different selector logic in `useOnyx`. It should be unified in the future, when `withOnyx` is removed.
  */
 function tryGetCachedValue<TKey extends OnyxKey>(key: TKey): OnyxValue<OnyxKey> {
-    if (!OnyxUtils.isCollectionKey(key)) {
+    if (!OnyxKeyUtils.isCollectionKey(key)) {
         return OnyxCache.get(key);
     }
 
@@ -169,12 +170,12 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(
         }
 
         try {
-            const previousCollectionKey = OnyxUtils.splitCollectionMemberKey(previousKey)[0];
-            const collectionKey = OnyxUtils.splitCollectionMemberKey(key)[0];
+            const previousCollectionKey = OnyxKeyUtils.splitCollectionMemberKey(previousKey)[0];
+            const collectionKey = OnyxKeyUtils.splitCollectionMemberKey(key)[0];
 
             if (
-                OnyxUtils.isCollectionMemberKey(previousCollectionKey, previousKey, previousCollectionKey.length) &&
-                OnyxUtils.isCollectionMemberKey(collectionKey, key, collectionKey.length) &&
+                OnyxKeyUtils.isCollectionMemberKey(previousCollectionKey, previousKey, previousCollectionKey.length) &&
+                OnyxKeyUtils.isCollectionMemberKey(collectionKey, key, collectionKey.length) &&
                 previousCollectionKey === collectionKey
             ) {
                 return;
@@ -332,7 +333,7 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(
                     onStoreChange();
                 },
                 initWithStoredValues: options?.initWithStoredValues,
-                waitForCollectionCallback: OnyxUtils.isCollectionKey(key) as true,
+                waitForCollectionCallback: OnyxKeyUtils.isCollectionKey(key) as true,
                 reuseConnection: options?.reuseConnection,
             });
 
