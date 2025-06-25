@@ -186,21 +186,42 @@ function set<TKey extends OnyxKey>(key: TKey, value: OnyxSetInput<TKey>): Promis
     }
 
     const valueWithoutNullValues = valueAfterRemoving as OnyxValue<TKey>;
+    const start = performance.now();
     const hasChanged = cache.hasValueChanged(key, valueWithoutNullValues);
+    const hasValueChangedTime = performance.now();
 
     logSetCall(hasChanged);
+
+    const logSetCallTime = performance.now();
 
     // This approach prioritizes fast UI changes without waiting for data to be stored in device storage.
     const updatePromise = OnyxUtils.broadcastUpdate(key, valueWithoutNullValues, hasChanged);
 
+    const broadcastUpdateTime = performance.now();
+
     // If the value has not changed or the key got removed, calling Storage.setItem() would be redundant and a waste of performance, so return early instead.
     if (!hasChanged) {
+        const timings = {
+            hasValueChanged: hasValueChangedTime - start,
+            logSetCall: logSetCallTime - hasValueChangedTime,
+            broadcastUpdate: broadcastUpdateTime - logSetCallTime,
+        };
+
+        console.log('[DBG]', key, 'hasChanged: false', timings);
         return updatePromise;
     }
 
     return Storage.setItem(key, valueWithoutNullValues)
         .catch((error) => OnyxUtils.evictStorageAndRetry(error, set, key, valueWithoutNullValues))
         .then(() => {
+            const storageWriteTime = performance.now();
+            const timings = {
+                hasValueChanged: hasValueChangedTime - start,
+                logSetCall: logSetCallTime - hasValueChangedTime,
+                broadcastUpdate: broadcastUpdateTime - logSetCallTime,
+                storageWrite: storageWriteTime - broadcastUpdateTime,
+            };
+            console.log('[DBG]', key, 'hasChanged: true', timings);
             OnyxUtils.sendActionToDevTools(OnyxUtils.METHOD.SET, key, valueWithoutNullValues);
             return updatePromise;
         });
