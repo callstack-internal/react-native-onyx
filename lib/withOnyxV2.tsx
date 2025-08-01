@@ -64,6 +64,10 @@ export default function <TComponentProps, TOnyxProps>(
                 }
 
                 onyxDataToPass[propName] = useOnyxHookData as TOnyxProps[keyof TOnyxProps];
+
+                if (useOnyxHookData === undefined && props[propName as keyof WithOnyxProps<TComponentProps, TOnyxProps>] !== undefined) {
+                    onyxDataToPass[propName] = props[propName as keyof WithOnyxProps<TComponentProps, TOnyxProps>] as TOnyxProps[keyof TOnyxProps];
+                }
             }
 
             if (!areAllUseOnyxHooksLoadedRef.current && useOnyxHooksInLoadingState > 0) {
@@ -81,6 +85,7 @@ export default function <TComponentProps, TOnyxProps>(
                     {...(props as TComponentProps)}
                     // eslint-disable-next-line react/jsx-props-no-spreading
                     {...onyxDataToPass}
+                    forwardedRef={undefined}
                     ref={props.forwardedRef}
                 />
             );
