@@ -34,7 +34,6 @@ import type {
 } from './types';
 import type {FastMergeOptions, FastMergeResult} from './utils';
 import utils from './utils';
-import type {WithOnyxState} from './withOnyx/types';
 import type {DeferredTask} from './createDeferredTask';
 import createDeferredTask from './createDeferredTask';
 import * as GlobalSettings from './GlobalSettings';
@@ -243,7 +242,7 @@ function batchUpdates(updates: () => void): Promise<void> {
 function reduceCollectionWithSelector<TKey extends CollectionKeyBase, TMap, TReturn>(
     collection: OnyxCollection<KeyValueMapping[TKey]>,
     selector: Selector<TKey, TMap, TReturn>,
-    withOnyxInstanceState: WithOnyxState<TMap> | undefined,
+    withOnyxInstanceState: Partial<TMap> | undefined,
 ): Record<string, TReturn> {
     return Object.entries(collection ?? {}).reduce((finalCollection: Record<string, TReturn>, [key, item]) => {
         // eslint-disable-next-line no-param-reassign

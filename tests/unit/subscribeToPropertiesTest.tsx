@@ -1,7 +1,9 @@
 import type {ErrorInfo, ReactNode} from 'react';
 import React from 'react';
-import {render, cleanup, configure as configureRNTL, resetToDefaults as resetRNTLToDefaults} from '@testing-library/react-native';
-import Onyx, {withOnyx} from '../../lib';
+import {render, cleanup, act} from '@testing-library/react-native';
+// import Onyx, {withOnyx} from '../../lib';
+import Onyx from '../../lib';
+import withOnyx from '../../lib/withOnyxV2';
 import waitForPromisesToResolve from '../utils/waitForPromisesToResolve';
 import type {ViewWithObjectProps} from '../components/ViewWithObject';
 import ViewWithObject from '../components/ViewWithObject';
@@ -42,22 +44,11 @@ class ErrorBoundary extends React.Component<ErrorBoundaryProps> {
 }
 
 describe('Only the specific property changes when using withOnyx() and ', () => {
-    beforeAll(() => {
-        // Disables concurrent rendering as it breaks withOnyx() tests.
-        configureRNTL({
-            concurrentRoot: false,
-        });
-    });
-
-    afterAll(() => {
-        resetRNTLToDefaults();
-    });
-
     // Cleanup (ie. unmount) all rendered components and clear out Onyx after each test so that each test starts
     // with a clean slate
-    afterEach(() => {
+    afterEach(async () => {
         cleanup();
-        Onyx.clear();
+        await Onyx.clear();
     });
 
     /**
@@ -136,56 +127,48 @@ describe('Only the specific property changes when using withOnyx() and ', () => 
     /**
      * Runs all the assertions for connecting to a full collection
      */
-    const runAllAssertionsForCollection = (TestComponentWithOnyx: React.ComponentType) => {
+    const runAllAssertionsForCollection = async (TestComponentWithOnyx: React.ComponentType) => {
         let renderedComponent = render(
             <ErrorBoundary>
                 <TestComponentWithOnyx />
             </ErrorBoundary>,
         );
-        return (
-            waitForPromisesToResolve()
-                // When Onyx is updated with an object that has multiple properties
-                .then(() =>
-                    Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
-                        [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {a: 'one', b: 'two'},
-                        [`${ONYX_KEYS.COLLECTION.TEST_KEY}2`]: {c: 'three', d: 'four'},
-                    } as GenericCollection),
-                )
-                .then(() => {
-                    renderedComponent = render(
-                        <ErrorBoundary>
-                            <TestComponentWithOnyx />
-                        </ErrorBoundary>,
-                    );
-                })
 
-                // Then the props passed to the component should only include the property "a" that was specified
-                .then(() => {
-                    expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"one"}}');
-                })
+        await act(async () => waitForPromisesToResolve());
 
-                // When Onyx is updated with a change to property a using merge()
-                // This uses merge() just to make sure that everything works as expected when mixing merge()
-                // and mergeCollection()
-                .then(() => Onyx.merge(`${ONYX_KEYS.COLLECTION.TEST_KEY}1`, {a: 'two'}))
+        // When Onyx is updated with an object that has multiple properties
+        Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
+            [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {a: 'one', b: 'two'},
+            [`${ONYX_KEYS.COLLECTION.TEST_KEY}2`]: {c: 'three', d: 'four'},
+        } as GenericCollection);
+        await act(async () => waitForPromisesToResolve());
 
-                // Then the props passed should have the new value of property "a"
-                .then(() => {
-                    expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"two"}}');
-                })
-
-                // When Onyx is updated with a change to property b using mergeCollection()
-                .then(() =>
-                    Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
-                        [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {b: 'three'},
-                    } as GenericCollection),
-                )
-
-                // Then the props passed should not have changed
-                .then(() => {
-                    expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"two"}}');
-                })
+        renderedComponent = render(
+            <ErrorBoundary>
+                <TestComponentWithOnyx />
+            </ErrorBoundary>,
         );
+
+        // Then the props passed to the component should only include the property "a" that was specified
+        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"one"}}');
+
+        // When Onyx is updated with a change to property a using merge()
+        // This uses merge() just to make sure that everything works as expected when mixing merge()
+        // and mergeCollection()
+        Onyx.merge(`${ONYX_KEYS.COLLECTION.TEST_KEY}1`, {a: 'two'});
+        await act(async () => waitForPromisesToResolve());
+
+        // Then the props passed should have the new value of property "a"
+        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"two"}}');
+
+        // When Onyx is updated with a change to property b using mergeCollection()
+        Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
+            [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {b: 'three'},
+        } as GenericCollection);
+        await act(async () => waitForPromisesToResolve());
+
+        // Then the props passed should not have changed
+        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"two"}}');
     };
 
     it('connecting to a collection with a selector function', () => {
@@ -207,63 +190,55 @@ describe('Only the specific property changes when using withOnyx() and ', () => 
             }
 
             // Check to make sure that the selector was called with the props that are passed to the rendered component
-            expect(mockedSelector).toHaveBeenNthCalledWith(5, {a: 'two', b: 'two'}, {loading: false, collectionWithPropertyA: {test_1: 'one', test_2: undefined}});
+            expect(mockedSelector).toHaveBeenLastCalledWith({c: 'three', d: 'four'}, {collectionWithPropertyA: {test_1: 'two'}});
         });
     });
 
     /**
      * Runs all the assertions when connecting to a key that is part of a collection
      */
-    const runAllAssertionsForCollectionMemberKey = (TestComponentWithOnyx: React.ComponentType) => {
+    const runAllAssertionsForCollectionMemberKey = async (TestComponentWithOnyx: React.ComponentType) => {
         let renderedComponent = render(
             <ErrorBoundary>
                 <TestComponentWithOnyx />
             </ErrorBoundary>,
         );
-        return (
-            waitForPromisesToResolve()
-                // When Onyx is updated with an object that has multiple properties
-                .then(() =>
-                    Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
-                        [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {a: 'one', b: 'two'},
-                        [`${ONYX_KEYS.COLLECTION.TEST_KEY}2`]: {c: 'three', d: 'four'},
-                    } as GenericCollection),
-                )
-                .then(() => {
-                    renderedComponent = render(
-                        <ErrorBoundary>
-                            <TestComponentWithOnyx />
-                        </ErrorBoundary>,
-                    );
-                })
 
-                // Then the props passed to the component should only include the property "a" that was specified
-                .then(() => {
-                    expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"one"}');
-                })
+        await act(async () => waitForPromisesToResolve());
 
-                // When Onyx is updated with a change to property a using merge()
-                // This uses merge() just to make sure that everything works as expected when mixing merge()
-                // and mergeCollection()
-                .then(() => Onyx.merge(`${ONYX_KEYS.COLLECTION.TEST_KEY}1`, {a: 'two'}))
+        // When Onyx is updated with an object that has multiple properties
+        Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
+            [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {a: 'one', b: 'two'},
+            [`${ONYX_KEYS.COLLECTION.TEST_KEY}2`]: {c: 'three', d: 'four'},
+        } as GenericCollection);
+        await act(async () => waitForPromisesToResolve());
 
-                // Then the props passed should have the new value of property "a"
-                .then(() => {
-                    expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"two"}');
-                })
-
-                // When Onyx is updated with a change to property b using mergeCollection()
-                .then(() =>
-                    Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
-                        [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {b: 'three'},
-                    } as GenericCollection),
-                )
-
-                // Then the props passed should not have changed
-                .then(() => {
-                    expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"two"}');
-                })
+        renderedComponent = render(
+            <ErrorBoundary>
+                <TestComponentWithOnyx />
+            </ErrorBoundary>,
         );
+
+        // Then the props passed to the component should only include the property "a" that was specified
+        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"one"}');
+
+        // When Onyx is updated with a change to property a using merge()
+        // This uses merge() just to make sure that everything works as expected when mixing merge()
+        // and mergeCollection()
+        Onyx.merge(`${ONYX_KEYS.COLLECTION.TEST_KEY}1`, {a: 'two'});
+        await act(async () => waitForPromisesToResolve());
+
+        // Then the props passed should have the new value of property "a"
+        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"two"}');
+
+        // When Onyx is updated with a change to property b using mergeCollection()
+        Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
+            [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {b: 'three'},
+        } as GenericCollection);
+        await act(async () => waitForPromisesToResolve());
+
+        // Then the props passed should not have changed
+        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"two"}');
     };
 
     it('connecting to a collection member with a selector function', () => {

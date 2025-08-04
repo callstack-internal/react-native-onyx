@@ -1,7 +1,7 @@
 import type {Merge} from 'type-fest';
 import type {BuiltIns} from 'type-fest/source/internal';
 import type OnyxUtils from './OnyxUtils';
-import type {WithOnyxInstance, WithOnyxState} from './withOnyx/types';
+import type {WithOnyxInstance} from './withOnyx/types';
 import type {OnyxMethod} from './OnyxUtils';
 import type {FastMergeReplaceNullPatch} from './utils';
 
@@ -123,7 +123,7 @@ type OnyxKey = Key | CollectionKey;
  * The type `TKey` extends `OnyxKey` and it is the key used to access a value in `KeyValueMapping`.
  * `TReturnType` is the type of the returned value from the selector function.
  */
-type Selector<TKey extends OnyxKey, TOnyxProps, TReturnType> = (value: OnyxEntry<KeyValueMapping[TKey]>, state?: WithOnyxState<TOnyxProps>) => TReturnType;
+type Selector<TKey extends OnyxKey, TOnyxProps, TReturnType> = (value: OnyxEntry<KeyValueMapping[TKey]>, state?: Partial<TOnyxProps>) => TReturnType;
 
 /**
  * Represents a single Onyx entry, that can be either `TOnyxValue` or `undefined` if it doesn't exist.

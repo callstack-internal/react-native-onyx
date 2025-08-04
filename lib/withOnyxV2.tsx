@@ -20,33 +20,49 @@ function mapOnyxToStateEntries<TComponentProps, TOnyxProps>(mapOnyxToState: MapO
     return Object.entries(mapOnyxToState) as Array<[keyof TOnyxProps, WithOnyxMapping<TComponentProps, TOnyxProps>]>;
 }
 
+/**
+ * Represents the `withOnyx` internal component state.
+ */
+type WithOnyxState<TOnyxProps> = {
+    areAllUseOnyxHooksLoaded: boolean;
+    propsToPass: Partial<TOnyxProps>;
+};
+
 export default function <TComponentProps, TOnyxProps>(
     mapOnyxToState: MapOnyxToState<TComponentProps, TOnyxProps>,
 ): (component: React.ComponentType<TComponentProps>) => React.ComponentType<Omit<TComponentProps, keyof TOnyxProps>> {
     return (WrappedComponent: React.ComponentType<TComponentProps>): React.ComponentType<Omit<TComponentProps, keyof TOnyxProps>> => {
         const displayName = getDisplayName(WrappedComponent);
 
-        function WithOnyx(props: WithOnyxProps<TComponentProps, TOnyxProps>) {
-            const onyxDataToPass: Partial<TOnyxProps> = {};
+        function WithOnyx(componentProps: WithOnyxProps<TComponentProps, TOnyxProps>) {
+            const {forwardedRef, ...rest} = componentProps;
+            const props = rest as WithOnyxProps<TComponentProps, TOnyxProps>;
 
             const mappings = mapOnyxToStateEntries(mapOnyxToState);
 
             let useOnyxHooksInLoadingState = 0;
-            const areAllUseOnyxHooksLoadedRef = useRef(false);
+            const withOnyxStateRef = useRef<WithOnyxState<TOnyxProps>>({
+                areAllUseOnyxHooksLoaded: false,
+                propsToPass: {},
+            });
 
             // eslint-disable-next-line @typescript-eslint/prefer-for-of
             for (let i = 0; i < mappings.length; i++) {
                 const [propName, mapping] = mappings[i];
-                const canEvict = mapping.canEvict !== undefined ? !!Str.result(mapping.canEvict as GenericFunction, props) : undefined;
-                const key = Str.result(mapping.key as GenericFunction, props);
+                const canEvict = mapping.canEvict !== undefined ? !!Str.result(mapping.canEvict as GenericFunction, {...props, ...withOnyxStateRef.current.propsToPass}) : undefined;
+                const key = Str.result(mapping.key as GenericFunction, {...props, ...withOnyxStateRef.current.propsToPass});
 
                 // eslint-disable-next-line no-undef-init
                 let selector: UseOnyxSelector<OnyxKey, OnyxValue<OnyxKey>> | undefined = undefined;
                 if ('selector' in mapping) {
                     if (OnyxUtils.isCollectionKey(key)) {
-                        selector = (data) => OnyxUtils.reduceCollectionWithSelector(data as OnyxCollection<unknown>, mapping.selector, undefined);
+                        selector = (data) => {
+                            return OnyxUtils.reduceCollectionWithSelector(data as OnyxCollection<unknown>, mapping.selector, {...props, ...withOnyxStateRef.current.propsToPass});
+                        };
                     } else {
-                        selector = mapping.selector;
+                        selector = (data) => {
+                            return mapping.selector(data, withOnyxStateRef.current.areAllUseOnyxHooksLoaded ? {...props, ...withOnyxStateRef.current.propsToPass} : undefined);
+                        };
                     }
                 }
 
@@ -63,19 +79,19 @@ export default function <TComponentProps, TOnyxProps>(
                     useOnyxHooksInLoadingState++;
                 }
 
-                onyxDataToPass[propName] = useOnyxHookData as TOnyxProps[keyof TOnyxProps];
+                withOnyxStateRef.current.propsToPass[propName] = useOnyxHookData as TOnyxProps[keyof TOnyxProps];
 
                 if (useOnyxHookData === undefined && props[propName as keyof WithOnyxProps<TComponentProps, TOnyxProps>] !== undefined) {
-                    onyxDataToPass[propName] = props[propName as keyof WithOnyxProps<TComponentProps, TOnyxProps>] as TOnyxProps[keyof TOnyxProps];
+                    withOnyxStateRef.current.propsToPass[propName] = props[propName as keyof WithOnyxProps<TComponentProps, TOnyxProps>] as TOnyxProps[keyof TOnyxProps];
                 }
             }
 
-            if (!areAllUseOnyxHooksLoadedRef.current && useOnyxHooksInLoadingState > 0) {
-                return null;
+            if (!withOnyxStateRef.current.areAllUseOnyxHooksLoaded && useOnyxHooksInLoadingState === 0) {
+                withOnyxStateRef.current.areAllUseOnyxHooksLoaded = true;
             }
 
-            if (!areAllUseOnyxHooksLoadedRef.current) {
-                areAllUseOnyxHooksLoadedRef.current = true;
+            if (!withOnyxStateRef.current.areAllUseOnyxHooksLoaded) {
+                return null;
             }
 
             // Spreading props and state is necessary in an HOC where the data cannot be predicted
@@ -84,9 +100,8 @@ export default function <TComponentProps, TOnyxProps>(
                     // eslint-disable-next-line react/jsx-props-no-spreading
                     {...(props as TComponentProps)}
                     // eslint-disable-next-line react/jsx-props-no-spreading
-                    {...onyxDataToPass}
-                    forwardedRef={undefined}
-                    ref={props.forwardedRef}
+                    {...withOnyxStateRef.current.propsToPass}
+                    ref={forwardedRef}
                 />
             );
         }
