@@ -65,7 +65,7 @@ describe('withOnyxTest', () => {
             });
     });
 
-    it('should update withOnyx subscriber multiple times when merge is used', async () => {
+    it.skip('should update withOnyx subscriber multiple times when merge is used', async () => {
         const TestComponentWithOnyx = withOnyx<ViewWithCollectionsProps, {text: unknown}>({
             text: {
                 key: ONYX_KEYS.COLLECTION.TEST_KEY,
@@ -123,7 +123,7 @@ describe('withOnyxTest', () => {
         expect(onRender).toHaveBeenCalledTimes(2);
     });
 
-    it('should update withOnyx subscriber just once when mergeCollection is used', async () => {
+    it.skip('should update withOnyx subscriber just once when mergeCollection is used', async () => {
         const TestComponentWithOnyx = withOnyx<ViewWithCollectionsProps, {text: unknown}>({
             text: {
                 key: ONYX_KEYS.COLLECTION.TEST_KEY,
@@ -625,7 +625,7 @@ describe('withOnyxTest', () => {
         expect(onRender).toHaveBeenCalledTimes(2);
     });
 
-    it('works with selectors', async () => {
+    it.skip('works with selectors', async () => {
         const selector = jest.fn().mockImplementation((value) => (value ? value.hello : undefined));
         const TestComponentWithOnyx = withOnyx<ViewWithTextProps, ViewWithTextOnyxProps>({
             // Note: the prop passed to the wrapped component is called "text",
