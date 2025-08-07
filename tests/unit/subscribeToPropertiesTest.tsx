@@ -1,6 +1,6 @@
 import type {ErrorInfo, ReactNode} from 'react';
 import React from 'react';
-import {render, cleanup, act} from '@testing-library/react-native';
+import {render, cleanup, act, waitFor} from '@testing-library/react-native';
 // import Onyx, {withOnyx} from '../../lib';
 import Onyx from '../../lib';
 import withOnyx from '../../lib/withOnyxV2';
@@ -156,19 +156,17 @@ describe('Only the specific property changes when using withOnyx() and ', () => 
         // This uses merge() just to make sure that everything works as expected when mixing merge()
         // and mergeCollection()
         Onyx.merge(`${ONYX_KEYS.COLLECTION.TEST_KEY}1`, {a: 'two'});
-        await act(async () => waitForPromisesToResolve());
 
         // Then the props passed should have the new value of property "a"
-        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"two"}}');
+        await waitFor(() => expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"two"}}'));
 
         // When Onyx is updated with a change to property b using mergeCollection()
         Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
             [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {b: 'three'},
         } as GenericCollection);
-        await act(async () => waitForPromisesToResolve());
 
         // Then the props passed should not have changed
-        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"two"}}');
+        await waitFor(() => expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"collectionWithPropertyA":{"test_1":"two"}}'));
     };
 
     it('connecting to a collection with a selector function', () => {
@@ -179,7 +177,7 @@ describe('Only the specific property changes when using withOnyx() and ', () => 
                 selector: mockedSelector,
             },
         })(ViewWithObject);
-        return runAllAssertionsForCollection(TestComponentWithOnyx).then(() => {
+        return runAllAssertionsForCollection(TestComponentWithOnyx).then(async () => {
             // Expect that the selector always gets called with the full object
             // from the onyx state, and not with the selector result value (string in this case).
 
@@ -190,7 +188,7 @@ describe('Only the specific property changes when using withOnyx() and ', () => 
             }
 
             // Check to make sure that the selector was called with the props that are passed to the rendered component
-            expect(mockedSelector).toHaveBeenLastCalledWith({c: 'three', d: 'four'}, {collectionWithPropertyA: {test_1: 'two'}});
+            await waitFor(() => expect(mockedSelector).toHaveBeenLastCalledWith({c: 'three', d: 'four'}, {collectionWithPropertyA: {test_1: 'two'}}));
         });
     });
 
@@ -226,19 +224,17 @@ describe('Only the specific property changes when using withOnyx() and ', () => 
         // This uses merge() just to make sure that everything works as expected when mixing merge()
         // and mergeCollection()
         Onyx.merge(`${ONYX_KEYS.COLLECTION.TEST_KEY}1`, {a: 'two'});
-        await act(async () => waitForPromisesToResolve());
 
         // Then the props passed should have the new value of property "a"
-        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"two"}');
+        await waitFor(() => expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"two"}'));
 
         // When Onyx is updated with a change to property b using mergeCollection()
         Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
             [`${ONYX_KEYS.COLLECTION.TEST_KEY}1`]: {b: 'three'},
         } as GenericCollection);
-        await act(async () => waitForPromisesToResolve());
 
         // Then the props passed should not have changed
-        expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"two"}');
+        await waitFor(() => expect(renderedComponent.getByTestId('text-element').props.children).toEqual('{"itemWithPropertyA":"two"}'));
     };
 
     it('connecting to a collection member with a selector function', () => {

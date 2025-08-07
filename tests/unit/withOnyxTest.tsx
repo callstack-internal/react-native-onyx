@@ -1,5 +1,5 @@
 import React from 'react';
-import {act, render} from '@testing-library/react-native';
+import {act, render, waitFor} from '@testing-library/react-native';
 import Onyx from '../../lib';
 import type {ViewWithTextOnyxProps, ViewWithTextProps} from '../components/ViewWithText';
 import ViewWithText from '../components/ViewWithText';
@@ -116,11 +116,9 @@ describe('withOnyxTest', () => {
         Onyx.merge(ONYX_KEYS.SIMPLE_KEY, 'string');
         Onyx.merge(ONYX_KEYS.SIMPLE_KEY_2, 'string2');
 
-        await act(async () => waitForPromisesToResolve());
-
         // We expect it to be 2 as we first is initial render and second are 3 Onyx merges batched together.
         // As you see onyx merges on the top of the function doesn't account they are done earlier
-        expect(onRender).toHaveBeenCalledTimes(2);
+        await waitFor(() => expect(onRender).toHaveBeenCalledTimes(2));
     });
 
     it.skip('should update withOnyx subscriber just once when mergeCollection is used', async () => {
@@ -154,7 +152,7 @@ describe('withOnyxTest', () => {
         await act(async () => waitForPromisesToResolve());
         await act(async () => Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {test_1: {ID: 123}, test_2: {ID: 234}, test_3: {ID: 345}} as GenericCollection));
 
-        expect(onRender).toHaveBeenCalledTimes(2);
+        await waitFor(() => expect(onRender).toHaveBeenCalledTimes(2));
     });
 
     it('should replace arrays inside objects with withOnyx subscribing to individual key if mergeCollection is used', async () => {
@@ -178,9 +176,7 @@ describe('withOnyxTest', () => {
         Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {test_1: {list: [1, 2]}} as GenericCollection);
         Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {test_1: {list: [7]}} as GenericCollection);
 
-        await act(async () => waitForPromisesToResolve());
-
-        expect(onRender).toHaveBeenCalledTimes(2);
+        await waitFor(() => expect(onRender).toHaveBeenCalledTimes(2));
         expect(onRender).toHaveBeenLastCalledWith({
             collections: {},
             markReadyForHydration,
@@ -211,9 +207,7 @@ describe('withOnyxTest', () => {
         Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {test_4: {ID: 456}, test_5: {ID: 567}} as GenericCollection);
         Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {test_4: {Name: 'Test4'}, test_5: {Name: 'Test5'}, test_6: {ID: 678, Name: 'Test6'}} as GenericCollection);
 
-        await act(async () => waitForPromisesToResolve());
-
-        expect(onRender).toHaveBeenCalledTimes(2);
+        await waitFor(() => expect(onRender).toHaveBeenCalledTimes(2));
         expect(onRender).toHaveBeenLastCalledWith({
             collections: {},
             markReadyForHydration,
@@ -328,19 +322,19 @@ describe('withOnyxTest', () => {
             />,
         );
 
-        await act(async () => waitForPromisesToResolve());
-
         // Then all of the data gets properly loaded into the component as expected with the nested dependencies resolved
-        expect(onRender).toHaveBeenLastCalledWith({
-            markReadyForHydration,
-            onRender,
-            collections: {},
-            testObject: {isDefaultProp: true},
-            staticObject: {name: 'Static 1', id: 1},
-            dependentObject: {name: 'dependsOnStatic 1', id: 3},
-            multiDependentObject: {name: 'dependsOnDependsOnStatic 1', id: 5},
-            extremeMultiDependentObject: {name: 'dependsOnDependsOnDependsOnStatic 1'},
-        });
+        await waitFor(() =>
+            expect(onRender).toHaveBeenLastCalledWith({
+                markReadyForHydration,
+                onRender,
+                collections: {},
+                testObject: {isDefaultProp: true},
+                staticObject: {name: 'Static 1', id: 1},
+                dependentObject: {name: 'dependsOnStatic 1', id: 3},
+                multiDependentObject: {name: 'dependsOnDependsOnStatic 1', id: 5},
+                extremeMultiDependentObject: {name: 'dependsOnDependsOnDependsOnStatic 1'},
+            }),
+        );
     });
 
     it('using mergeCollection to modify one item should only effect one component', async () => {
@@ -400,13 +394,12 @@ describe('withOnyxTest', () => {
         Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
             test_1: {ID: 1, newProperty: 'yay'},
         } as GenericCollection);
-        await act(async () => waitForPromisesToResolve());
 
         // Then the component subscribed to the modified item should have the new version of the item
         // and all other components should be unchanged.
         // Note: each component is rendered twice. Once when it is initially rendered, and then again
         // when the collection is updated. That's why there are two checks here for each component.
-        expect(onRender1).toHaveBeenCalledTimes(2);
+        await waitFor(() => expect(onRender1).toHaveBeenCalledTimes(2));
         expect(onRender1).toHaveBeenNthCalledWith(1, {
             collections: {},
             markReadyForHydration: markReadyForHydration1,
@@ -465,12 +458,11 @@ describe('withOnyxTest', () => {
         Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
             test_1: {number: 2},
         } as GenericCollection);
-        await act(async () => waitForPromisesToResolve());
 
         // Then the component subscribed to the modified item should be rendered twice.
         // The first time it will render with number === 1
         // The second time it will render with number === 2
-        expect(onRender).toHaveBeenCalledTimes(2);
+        await waitFor(() => expect(onRender).toHaveBeenCalledTimes(2));
         expect(onRender).toHaveBeenNthCalledWith(1, {
             collections: {},
             markReadyForHydration,
