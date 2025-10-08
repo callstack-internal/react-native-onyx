@@ -1,7 +1,9 @@
 import {measureFunction} from 'reassure';
 import Onyx from '../../lib';
 import utils from '../../lib/utils';
+import * as GlobalSettings from '../../lib/GlobalSettings';
 import createRandomReportAction, {getRandomReportActions} from '../utils/collections/reportActions';
+import OnyxMergeImmer from '../../lib/OnyxMergeImmer';
 
 const ONYXKEYS = {
     COLLECTION: {
@@ -20,11 +22,23 @@ describe('utils', () => {
     });
 
     describe('fastMerge', () => {
-        test('one call', async () => {
+        test('one call with current implementation', async () => {
+            GlobalSettings.setUseImmerForMerges(false);
             const target = getRandomReportActions(collectionKey, 1000);
             const source = getRandomReportActions(collectionKey, 500);
             await measureFunction(() =>
                 utils.fastMerge(target, source, {
+                    shouldRemoveNestedNulls: true,
+                }),
+            );
+        });
+
+        test('one call with Immer implementation', async () => {
+            GlobalSettings.setUseImmerForMerges(true);
+            const target = getRandomReportActions(collectionKey, 1000);
+            const source = getRandomReportActions(collectionKey, 500);
+            await measureFunction(() =>
+                OnyxMergeImmer.fastMerge(target, source, {
                     shouldRemoveNestedNulls: true,
                 }),
             );

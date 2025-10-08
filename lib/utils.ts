@@ -1,4 +1,6 @@
 import type {OnyxInput, OnyxKey} from './types';
+import utilsImmer from './OnyxMergeImmer';
+import * as GlobalSettings from './GlobalSettings';
 
 type EmptyObject = Record<string, never>;
 type EmptyValue = EmptyObject | null | undefined;
@@ -45,6 +47,10 @@ const ONYX_INTERNALS__REPLACE_OBJECT_MARK = 'ONYX_INTERNALS__REPLACE_OBJECT_MARK
  * We generally want to remove null values from objects written to disk and cache, because it decreases the amount of data stored in memory and on disk.
  */
 function fastMerge<TValue>(target: TValue, source: TValue, options?: FastMergeOptions, metadata?: FastMergeMetadata, basePath: string[] = []): FastMergeResult<TValue> {
+    if (GlobalSettings.isUseImmerForMergesEnabled()) {
+        return utilsImmer.fastMerge(target, source, options);
+    }
+
     if (!metadata) {
         // eslint-disable-next-line no-param-reassign
         metadata = {
@@ -172,6 +178,10 @@ function isMergeableObject<TObject extends Record<string, unknown>>(value: unkno
 
 /** Deep removes the nested null values from the given value. */
 function removeNestedNullValues<TValue extends OnyxInput<OnyxKey> | null>(value: TValue): TValue {
+    if (GlobalSettings.isUseImmerForMergesEnabled()) {
+        return utilsImmer.removeNestedNullValues(value);
+    }
+
     if (value === null || value === undefined || typeof value !== 'object') {
         return value;
     }

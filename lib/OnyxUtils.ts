@@ -32,6 +32,7 @@ import type {
 } from './types';
 import type {FastMergeOptions, FastMergeResult} from './utils';
 import utils from './utils';
+import utilsImmer from './OnyxMergeImmer';
 import type {DeferredTask} from './createDeferredTask';
 import createDeferredTask from './createDeferredTask';
 import * as GlobalSettings from './GlobalSettings';
@@ -948,6 +949,9 @@ function prepareKeyValuePairsForStorage(
  * @param existingValue The existing value that should be merged with the changes
  */
 function mergeChanges<TValue extends OnyxInput<OnyxKey> | undefined, TChange extends OnyxInput<OnyxKey> | undefined>(changes: TChange[], existingValue?: TValue): FastMergeResult<TChange> {
+    if (GlobalSettings.isUseImmerForMergesEnabled()) {
+        return mergeInternalImmer('merge', changes, existingValue);
+    }
     return mergeInternal('merge', changes, existingValue);
 }
 
@@ -962,6 +966,9 @@ function mergeAndMarkChanges<TValue extends OnyxInput<OnyxKey> | undefined, TCha
     changes: TChange[],
     existingValue?: TValue,
 ): FastMergeResult<TChange> {
+    if (GlobalSettings.isUseImmerForMergesEnabled()) {
+        return mergeInternalImmer('mark', changes, existingValue);
+    }
     return mergeInternal('mark', changes, existingValue);
 }
 
@@ -1009,15 +1016,58 @@ function mergeInternal<TValue extends OnyxInput<OnyxKey> | undefined, TChange ex
 }
 
 /**
+ * Immer-based merge function that replaces the current mergeInternal implementation
+ */
+function mergeInternalImmer<TValue extends OnyxInput<OnyxKey> | undefined, TChange extends OnyxInput<OnyxKey> | undefined>(
+    mode: 'merge' | 'mark',
+    changes: TChange[],
+    existingValue?: TValue,
+): FastMergeResult<TChange> {
+    const lastChange = changes?.at(-1);
+
+    if (Array.isArray(lastChange)) {
+        return {result: lastChange, replaceNullPatches: []};
+    }
+
+    if (changes.some((change) => change && typeof change === 'object')) {
+        // Use Immer to merge changes sequentially
+        return changes.reduce<FastMergeResult<TChange>>(
+            (modifiedData, change) => {
+                const options: FastMergeOptions = mode === 'merge' ? {shouldRemoveNestedNulls: true, objectRemovalMode: 'replace'} : {objectRemovalMode: 'mark'};
+
+                const {result, replaceNullPatches} = utilsImmer.fastMerge(modifiedData.result, change, options);
+
+                // eslint-disable-next-line no-param-reassign
+                modifiedData.result = result;
+                // eslint-disable-next-line no-param-reassign
+                modifiedData.replaceNullPatches = [...modifiedData.replaceNullPatches, ...replaceNullPatches];
+
+                return modifiedData;
+            },
+            {
+                result: (existingValue ?? {}) as TChange,
+                replaceNullPatches: [],
+            },
+        );
+    }
+
+    return {result: lastChange as TChange, replaceNullPatches: []};
+}
+
+/**
  * Merge user provided default key value pairs.
  */
 function initializeWithDefaultKeyStates(): Promise<void> {
     return Storage.multiGet(Object.keys(defaultKeyStates)).then((pairs) => {
         const existingDataAsObject = Object.fromEntries(pairs) as Record<string, unknown>;
 
-        const merged = utils.fastMerge(existingDataAsObject, defaultKeyStates, {
-            shouldRemoveNestedNulls: true,
-        }).result;
+        const merged = GlobalSettings.isUseImmerForMergesEnabled()
+            ? utilsImmer.fastMerge(existingDataAsObject, defaultKeyStates, {
+                  shouldRemoveNestedNulls: true,
+              }).result
+            : utils.fastMerge(existingDataAsObject, defaultKeyStates, {
+                  shouldRemoveNestedNulls: true,
+              }).result;
         cache.merge(merged ?? {});
 
         Object.entries(merged ?? {}).forEach(([key, value]) => keyChanged(key, value));

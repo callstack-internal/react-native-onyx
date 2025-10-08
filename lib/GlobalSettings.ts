@@ -4,6 +4,7 @@
 
 const globalSettings = {
     enablePerformanceMetrics: false,
+    useImmerForMerges: false,
 };
 
 type GlobalSettings = typeof globalSettings;
@@ -29,4 +30,13 @@ function isPerformanceMetricsEnabled() {
     return globalSettings.enablePerformanceMetrics;
 }
 
-export {setPerformanceMetricsEnabled, isPerformanceMetricsEnabled, addGlobalSettingsChangeListener};
+function setUseImmerForMerges(enabled: boolean) {
+    globalSettings.useImmerForMerges = enabled;
+    notifyListeners();
+}
+
+function isUseImmerForMergesEnabled() {
+    return globalSettings.useImmerForMerges;
+}
+
+export {setPerformanceMetricsEnabled, isPerformanceMetricsEnabled, setUseImmerForMerges, isUseImmerForMergesEnabled, addGlobalSettingsChangeListener};
