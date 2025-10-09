@@ -465,14 +465,14 @@ class OnyxCache {
     /**
      * Get all data for a collection key
      */
-    getCollectionData(collectionKey: OnyxKey): Record<OnyxKey, OnyxValue<OnyxKey>> | undefined {
+    getCollectionData(collectionKey: OnyxKey): Readonly<Record<OnyxKey, OnyxValue<OnyxKey>>> | undefined {
         const cachedCollection = this.collectionData[collectionKey];
         if (!cachedCollection || Object.keys(cachedCollection).length === 0) {
             return undefined;
         }
 
         // Return a shallow copy to ensure React detects changes when items are added/removed
-        return {...cachedCollection};
+        return {...cachedCollection} as Readonly<Record<OnyxKey, OnyxValue<OnyxKey>>>;
     }
 }
 

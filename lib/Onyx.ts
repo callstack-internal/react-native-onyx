@@ -9,9 +9,7 @@ import type {
     CollectionKeyBase,
     ConnectOptions,
     InitOptions,
-    KeyValueMapping,
     OnyxInputKeyValueMapping,
-    OnyxCollection,
     MixedOperationsQueue,
     OnyxKey,
     OnyxMergeCollectionInput,
@@ -405,8 +403,8 @@ function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
             cache.clearNullishStorageKeys();
 
             const keysToBeClearedFromStorage: OnyxKey[] = [];
-            const keyValuesToResetAsCollection: Record<OnyxKey, OnyxCollection<KeyValueMapping[OnyxKey]>> = {};
-            const keyValuesToResetIndividually: KeyValueMapping = {};
+            const keyValuesToResetAsCollection: Record<OnyxKey, Record<string, OnyxValue<OnyxKey>>> = {};
+            const keyValuesToResetIndividually: Record<string, OnyxValue<OnyxKey>> = {};
 
             const allKeys = new Set([...cachedKeys, ...initialKeys]);
 
@@ -470,7 +468,7 @@ function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
             const defaultKeyValuePairs = Object.entries(
                 Object.keys(defaultKeyStates)
                     .filter((key) => !keysToPreserve.includes(key))
-                    .reduce((obj: KeyValueMapping, key) => {
+                    .reduce((obj: Record<string, OnyxValue<OnyxKey>>, key) => {
                         // eslint-disable-next-line no-param-reassign
                         obj[key] = defaultKeyStates[key];
                         return obj;

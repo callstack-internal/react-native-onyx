@@ -236,27 +236,27 @@ function batchUpdates(updates: () => void): Promise<void> {
 function reduceCollectionWithSelector<TKey extends CollectionKeyBase, TReturn>(
     collection: OnyxCollection<KeyValueMapping[TKey]>,
     selector: Selector<TKey, TReturn>,
-): Record<string, TReturn> {
+): Readonly<Record<string, TReturn>> {
     return Object.entries(collection ?? {}).reduce((finalCollection: Record<string, TReturn>, [key, item]) => {
         // eslint-disable-next-line no-param-reassign
         finalCollection[key] = selector(item);
 
         return finalCollection;
-    }, {});
+    }, {}) as Readonly<Record<string, TReturn>>;
 }
 
 /** Get some data from the store */
-function get<TKey extends OnyxKey, TValue extends OnyxValue<TKey>>(key: TKey): Promise<TValue> {
+function get<TKey extends OnyxKey, TValue extends OnyxValue<TKey>>(key: TKey): Promise<Readonly<TValue>> {
     // When we already have the value in cache - resolve right away
     if (cache.hasCacheForKey(key)) {
-        return Promise.resolve(cache.get(key) as TValue);
+        return Promise.resolve(cache.get(key) as Readonly<TValue>);
     }
 
     const taskName = `${TASK.GET}:${key}` as const;
 
     // When a value retrieving task for this key is still running hook to it
     if (cache.hasPendingTask(taskName)) {
-        return cache.getTaskPromise(taskName) as Promise<TValue>;
+        return cache.getTaskPromise(taskName) as Promise<Readonly<TValue>>;
     }
 
     // Otherwise retrieve the value from storage and capture a promise to aid concurrent usages
@@ -285,11 +285,11 @@ function get<TKey extends OnyxKey, TValue extends OnyxValue<TKey>>(key: TKey): P
         })
         .catch((err) => Logger.logInfo(`Unable to get item from persistent storage. Key: ${key} Error: ${err}`));
 
-    return cache.captureTask(taskName, promise) as Promise<TValue>;
+    return cache.captureTask(taskName, promise) as Promise<Readonly<TValue>>;
 }
 
 // multiGet the data first from the cache and then from the storage for the missing keys.
-function multiGet<TKey extends OnyxKey>(keys: CollectionKeyBase[]): Promise<Map<OnyxKey, OnyxValue<TKey>>> {
+function multiGet<TKey extends OnyxKey>(keys: CollectionKeyBase[]): Promise<ReadonlyMap<OnyxKey, OnyxValue<TKey>>> {
     // Keys that are not in the cache
     const missingKeys: OnyxKey[] = [];
 
@@ -347,11 +347,11 @@ function multiGet<TKey extends OnyxKey>(keys: CollectionKeyBase[]): Promise<Map<
             // Add the data from the missing keys to the data map and also merge it to the cache.
             .then((values) => {
                 if (!values || values.length === 0) {
-                    return dataMap;
+                    return dataMap as ReadonlyMap<OnyxKey, OnyxValue<TKey>>;
                 }
 
                 // temp object is used to merge the missing data into the cache
-                const temp: OnyxCollection<KeyValueMapping[TKey]> = {};
+                const temp: Record<string, OnyxValue<TKey>> = {};
                 values.forEach(([key, value]) => {
                     if (skippableCollectionMemberIDs.size) {
                         try {
@@ -369,7 +369,7 @@ function multiGet<TKey extends OnyxKey>(keys: CollectionKeyBase[]): Promise<Map<
                     temp[key] = value as OnyxValue<TKey>;
                 });
                 cache.merge(temp);
-                return dataMap;
+                return dataMap as ReadonlyMap<OnyxKey, OnyxValue<TKey>>;
             })
     );
 }
@@ -380,8 +380,8 @@ function multiGet<TKey extends OnyxKey>(keys: CollectionKeyBase[]): Promise<Map<
  *
  * Note: just using `.map`, you'd end up with `Array<OnyxCollection<Report>|OnyxEntry<string>>`, which is not what we want. This preserves the order of the keys provided.
  */
-function tupleGet<Keys extends readonly OnyxKey[]>(keys: Keys): Promise<{[Index in keyof Keys]: OnyxValue<Keys[Index]>}> {
-    return Promise.all(keys.map((key) => get(key))) as Promise<{[Index in keyof Keys]: OnyxValue<Keys[Index]>}>;
+function tupleGet<Keys extends readonly OnyxKey[]>(keys: Keys): Promise<{[Index in keyof Keys]: Readonly<OnyxValue<Keys[Index]>>}> {
+    return Promise.all(keys.map((key) => get(key))) as Promise<{[Index in keyof Keys]: Readonly<OnyxValue<Keys[Index]>>}>;
 }
 
 /**
@@ -524,7 +524,7 @@ function getCollectionKey(key: CollectionKey): string {
  * Tries to get a value from the cache. If the value is not present in cache it will return the default value or undefined.
  * If the requested key is a collection, it will return an object with all the collection members.
  */
-function tryGetCachedValue<TKey extends OnyxKey>(key: TKey): OnyxValue<OnyxKey> {
+function tryGetCachedValue<TKey extends OnyxKey>(key: TKey): Readonly<OnyxValue<OnyxKey>> | undefined {
     let val = cache.get(key);
 
     if (isCollectionKey(key)) {
@@ -541,33 +541,33 @@ function tryGetCachedValue<TKey extends OnyxKey>(key: TKey): OnyxValue<OnyxKey> 
         }
     }
 
-    return val;
+    return val as Readonly<OnyxValue<OnyxKey>> | undefined;
 }
 
-function getCachedCollection<TKey extends CollectionKeyBase>(collectionKey: TKey, collectionMemberKeys?: string[]): NonNullable<OnyxCollection<KeyValueMapping[TKey]>> {
+function getCachedCollection<TKey extends CollectionKeyBase>(collectionKey: TKey, collectionMemberKeys?: string[]): Readonly<NonNullable<OnyxCollection<KeyValueMapping[TKey]>>> {
     // Use optimized collection data retrieval when cache is populated
     const collectionData = cache.getCollectionData(collectionKey);
     const allKeys = collectionMemberKeys || cache.getAllKeys();
     if (collectionData !== undefined && (Array.isArray(allKeys) ? allKeys.length > 0 : allKeys.size > 0)) {
         // If we have specific member keys, filter the collection
         if (collectionMemberKeys) {
-            const filteredCollection: OnyxCollection<KeyValueMapping[TKey]> = {};
+            const filteredCollection: Record<string, OnyxValue<TKey>> = {};
             collectionMemberKeys.forEach((key) => {
                 if (collectionData[key] !== undefined) {
-                    filteredCollection[key] = collectionData[key];
+                    filteredCollection[key] = collectionData[key] as OnyxValue<TKey>;
                 } else if (cache.hasNullishStorageKey(key)) {
-                    filteredCollection[key] = cache.get(key);
+                    filteredCollection[key] = cache.get(key) as OnyxValue<TKey>;
                 }
             });
-            return filteredCollection;
+            return filteredCollection as Readonly<NonNullable<OnyxCollection<KeyValueMapping[TKey]>>>;
         }
 
         // Return a copy to avoid mutations affecting the cache
-        return {...collectionData};
+        return {...collectionData} as Readonly<NonNullable<OnyxCollection<KeyValueMapping[TKey]>>>;
     }
 
     // Fallback to original implementation if collection data not available
-    const collection: OnyxCollection<KeyValueMapping[TKey]> = {};
+    const collection: Record<string, OnyxValue<TKey>> = {};
 
     // forEach exists on both Set and Array
     allKeys.forEach((key) => {
@@ -584,10 +584,10 @@ function getCachedCollection<TKey extends CollectionKeyBase>(collectionKey: TKey
             return;
         }
 
-        collection[key] = cache.get(key);
+        collection[key] = cache.get(key) as OnyxValue<TKey>;
     });
 
-    return collection;
+    return collection as Readonly<NonNullable<OnyxCollection<KeyValueMapping[TKey]>>>;
 }
 
 /**
@@ -717,7 +717,7 @@ function keyChanged<TKey extends OnyxKey>(
         }
     }
 
-    const cachedCollections: Record<string, ReturnType<typeof getCachedCollection>> = {};
+    const cachedCollections: Record<string, Record<string, OnyxValue<OnyxKey>>> = {};
 
     for (const stateMappingKey of stateMappingKeys) {
         const subscriber = callbackToStateMapping[stateMappingKey];
