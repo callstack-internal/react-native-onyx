@@ -303,7 +303,7 @@ describe('useOnyx', () => {
                 useOnyx(ONYXKEYS.COLLECTION.TEST_KEY, {
                     // @ts-expect-error bypass
                     selector: (entries: OnyxCollection<{id: string; name: string}>) =>
-                        Object.entries(entries ?? {}).reduce<NonNullable<OnyxCollection<string>>>((acc, [key, value]) => {
+                        Object.entries(entries ?? {}).reduce<Record<string, string | undefined>>((acc, [key, value]) => {
                             acc[key] = value?.id;
                             return acc;
                         }, {}),
@@ -915,7 +915,7 @@ describe('useOnyx', () => {
                     {
                         // @ts-expect-error bypass
                         selector: (entries: OnyxCollection<{id: string; name: string}>) =>
-                            Object.entries(entries ?? {}).reduce<NonNullable<OnyxCollection<string>>>((acc, [key, value]) => {
+                            Object.entries(entries ?? {}).reduce<Record<string, string | undefined>>((acc, [key, value]) => {
                                 acc[key] = `${value?.id}_${externalValue}`;
                                 return acc;
                             }, {}),
