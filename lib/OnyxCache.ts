@@ -1,6 +1,6 @@
 import {deepEqual} from 'fast-equals';
 import bindAll from 'lodash/bindAll';
-import type {ValueOf} from 'type-fest';
+import type {ValueOf, ReadonlyDeep} from 'type-fest';
 import utils from './utils';
 import type {OnyxKey, OnyxValue} from './types';
 import * as Str from './Str';
@@ -465,14 +465,14 @@ class OnyxCache {
     /**
      * Get all data for a collection key
      */
-    getCollectionData(collectionKey: OnyxKey): Readonly<Record<OnyxKey, OnyxValue<OnyxKey>>> | undefined {
+    getCollectionData(collectionKey: OnyxKey): ReadonlyDeep<Record<OnyxKey, OnyxValue<OnyxKey>>> | undefined {
         const cachedCollection = this.collectionData[collectionKey];
         if (!cachedCollection || Object.keys(cachedCollection).length === 0) {
             return undefined;
         }
 
         // Return a shallow copy to ensure React detects changes when items are added/removed
-        return {...cachedCollection} as Readonly<Record<OnyxKey, OnyxValue<OnyxKey>>>;
+        return {...cachedCollection} as ReadonlyDeep<Record<OnyxKey, OnyxValue<OnyxKey>>>;
     }
 }
 
