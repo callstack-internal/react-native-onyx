@@ -134,7 +134,7 @@ type OnyxEntry<TOnyxValue> = TOnyxValue | undefined;
  * Represents an Onyx collection of entries, that can be either a record of `TOnyxValue`s or `undefined` if it is empty or doesn't exist.
  * It can be used to specify collection data retrieved from Onyx.
  */
-type OnyxCollection<TOnyxValue> = OnyxEntry<Record<string, TOnyxValue | undefined>>;
+type OnyxCollection<TOnyxValue> = ReadonlyDeep<OnyxEntry<Record<string, TOnyxValue | undefined>>>;
 
 /**
  * Represents a mapping of Onyx keys to values, where keys are either normal or collection Onyx keys
@@ -145,9 +145,9 @@ type OnyxCollection<TOnyxValue> = OnyxEntry<Record<string, TOnyxValue | undefine
  *
  * The mapping is derived from the `values` property of the `TypeOptions` type.
  */
-type KeyValueMapping = {
+type KeyValueMapping = ReadonlyDeep<{
     [TKey in keyof TypeOptions['values'] as TKey extends CollectionKeyBase ? `${TKey}${string}` : TKey]: TypeOptions['values'][TKey];
-};
+}>;
 
 /**
  * Represents a Onyx value that can be either a single entry or a collection of entries, depending on the `TKey` provided.
@@ -205,13 +205,13 @@ type NullishObjectDeep<ObjectType extends object> = {
  * Also, the `TMap` type is inferred automatically in `mergeCollection()` method and represents
  * the object of collection keys/values specified in the second parameter of the method.
  */
-type Collection<TKey extends CollectionKeyBase, TValue, TMap = never> = {
+type Collection<TKey extends CollectionKeyBase, TValue, TMap = never> = ReadonlyDeep<{
     [MapK in keyof TMap]: MapK extends `${TKey}${string}`
         ? MapK extends `${TKey}`
             ? never // forbids empty id
             : TValue
         : never;
-};
+}>;
 
 /** Represents the base options used in `Onyx.connect()` method. */
 // NOTE: Any changes to this type like adding or removing options must be accounted in OnyxConnectionManager's `generateConnectionID()` method!
