@@ -109,20 +109,69 @@ const provider: StorageProvider = {
             return parseJSON(result.valueJSON);
         });
     },
-    multiGet(keys) {
-        const placeholders = keys.map(() => '?').join(',');
-        const command = `SELECT record_key, valueJSON FROM keyvaluepairs WHERE record_key IN (${placeholders});`;
-        return db.executeAsync<OnyxSQLiteKeyValuePair>(command, keys).then(({rows}) => {
+    // eslint-disable-next-line @lwc/lwc/no-async-await
+    async multiGet(keys) {
+        if (keys.length === 0) {
+            return [];
+        }
+
+        // For small batches, use the simple (and faster) chunked query
+        const CHUNK_SIZE = 500;
+        if (keys.length <= CHUNK_SIZE) {
+            const results: StorageKeyValuePair[] = [];
+            for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+                const chunk = keys.slice(i, i + CHUNK_SIZE);
+                const placeholders = chunk.map(() => '?').join(',');
+                const query = `SELECT record_key, valueJSON FROM keyvaluepairs WHERE record_key IN (${placeholders});`;
+
+                // eslint-disable-next-line no-await-in-loop
+                const {rows} = await db.executeAsync<OnyxSQLiteKeyValuePair>(query, chunk);
+                // eslint-disable-next-line no-underscore-dangle
+                if (rows?._array) {
+                    // eslint-disable-next-line no-underscore-dangle
+                    for (const row of rows._array) {
+                        results.push([row.record_key, parseJSON(row.valueJSON)]);
+                    }
+                }
+            }
+            return results;
+        }
+
+        // For large key lists, use a unique temporary table (safe for concurrency)
+        const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const tableName = `tmp_keys_${uniqueSuffix}`;
+
+        try {
+            // Create a unique TEMP table
+            await db.executeAsync(`CREATE TEMP TABLE ${tableName} (record_key TEXT PRIMARY KEY);`);
+
+            // Insert keys in a single batch
+            const insertQuery = `INSERT INTO ${tableName} (record_key) VALUES (?);`;
+            const insertParams = keys.map((key) => [key]);
+            await db.executeBatchAsync([{query: insertQuery, params: insertParams}]);
+
+            // Fetch all matches using an inner join
+            const {rows} = await db.executeAsync<OnyxSQLiteKeyValuePair>(
+                `SELECT k.record_key, k.valueJSON
+                 FROM keyvaluepairs AS k
+                 INNER JOIN ${tableName} AS t ON k.record_key = t.record_key;`,
+            );
+
+            // Map and parse
             // eslint-disable-next-line no-underscore-dangle
-            const result = rows?._array.map((row) => [row.record_key, parseJSON(row.valueJSON)]);
-            return (result ?? []) as StorageKeyValuePair[];
-        });
+            const result = rows?._array.map((row) => [row.record_key, parseJSON(row.valueJSON)]) as StorageKeyValuePair[];
+
+            return result ?? [];
+        } finally {
+            // Always drop the temp table, even if query fails
+            await db.executeAsync(`DROP TABLE IF EXISTS ${tableName};`);
+        }
     },
     setItem(key, value) {
-        return db.executeAsync('REPLACE INTO keyvaluepairs (record_key, valueJSON) VALUES (?, ?);', [key, stringifyJSON(value)]).then(() => undefined);
+        return db.executeAsync('INSERT OR REPLACE INTO keyvaluepairs (record_key, valueJSON) VALUES (?, ?);', [key, stringifyJSON(value)]).then(() => undefined);
     },
     multiSet(pairs) {
-        const query = 'REPLACE INTO keyvaluepairs (record_key, valueJSON) VALUES (?, json(?));';
+        const query = 'INSERT OR REPLACE INTO keyvaluepairs (record_key, valueJSON) VALUES (?, ?);';
         const params = pairs.map((pair) => [pair[0], stringifyJSON(pair[1] === undefined ? null : pair[1])]);
         if (utils.isEmptyObject(params)) {
             return Promise.resolve();
@@ -134,15 +183,15 @@ const provider: StorageProvider = {
 
         // Query to merge the change into the DB value.
         const patchQuery = `INSERT INTO keyvaluepairs (record_key, valueJSON)
-            VALUES (:key, JSON(:value))
+            VALUES (:key, :value)
             ON CONFLICT DO UPDATE
-            SET valueJSON = JSON_PATCH(valueJSON, JSON(:value));
+            SET valueJSON = JSON_PATCH(valueJSON, :value);
         `;
         const patchQueryArguments: string[][] = [];
 
         // Query to fully replace the nested objects of the DB value.
         const replaceQuery = `UPDATE keyvaluepairs
-            SET valueJSON = JSON_REPLACE(valueJSON, ?, JSON(?))
+            SET valueJSON = JSON_REPLACE(valueJSON, ?, ?)
             WHERE record_key = ?;
         `;
         const replaceQueryArguments: string[][] = [];
