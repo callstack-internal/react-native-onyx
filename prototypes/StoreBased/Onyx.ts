@@ -1,177 +1,213 @@
 /**
- * Onyx API - Store-Based Approach
+ * Onyx API - Store-Based Implementation
  *
- * Same API as KeyBased approach, but different internals:
- * - Storage: Collection-based (collections stored as single entries)
- * - OnyxStore: Global store with single subscription target
- * - Components: Subscribe to store, use selectors to read slices
+ * Main interface for interacting with the store-based storage system.
+ *
+ * Key differences from KeyBased:
+ * - Uses global OnyxStore for state management
+ * - All subscriptions are to the store (not per-key)
+ * - Optimized for concentrated workloads (same keys accessed frequently)
+ * - Collection-based storage for efficient bulk operations
  */
 
-import Storage, {isCollectionKey, getCollectionKey} from './Storage';
 import OnyxStore from './OnyxStore';
+import Storage from './Storage';
 import Cache from './Cache';
-import type {OnyxKey, OnyxValue, Connection, ConnectOptions, InitOptions, Callback} from './types';
+import type {OnyxKey, OnyxValue, Connection, ConnectOptions, InitOptions} from './types';
 
 /**
- * For non-React subscribers (Onyx.connect)
- * Maps connection IDs to their callbacks and keys
+ * Connection registry to track active connections
  */
-const connections = new Map<string, {key: OnyxKey; callback: Callback; unsubscribe: () => void}>();
-let nextConnectionId = 1;
+const connections = new Map<
+    string,
+    {
+        key: OnyxKey;
+        callback: (value: OnyxValue | null, key?: OnyxKey) => void;
+        unsubscribe: () => void;
+    }
+>();
+
+/**
+ * Connection ID counter
+ */
+let connectionIdCounter = 0;
+
+/**
+ * Check if a key is a collection key (ends with '_')
+ */
+function isCollectionKey(key: OnyxKey): boolean {
+    return key.endsWith('_');
+}
+
+/**
+ * Check if a key belongs to a collection
+ */
+function isCollectionMemberKey(key: OnyxKey, collectionKey: OnyxKey): boolean {
+    return key.startsWith(collectionKey) && key !== collectionKey;
+}
 
 /**
  * Initialize Onyx
  */
 async function init(options: InitOptions = {}): Promise<void> {
-    const {maxCachedKeysCount = 1000} = options;
+    const {maxCachedKeysCount = 1000, keys} = options;
 
     // Configure cache
     if (maxCachedKeysCount > 0) {
         Cache.setMaxSize(maxCachedKeysCount);
     }
 
-    // Initialize the store
-    OnyxStore.init();
+    // Load initial keys if provided
+    if (keys) {
+        Object.entries(keys).forEach(([key, value]) => {
+            OnyxStore.set(key, value);
+        });
+    }
 
-    console.log('[Onyx StoreBased] Initialized with cache size:', maxCachedKeysCount);
+    // Load data from storage into the store
+    const allKeys = await Storage.getAllKeys();
+    if (allKeys.length > 0) {
+        const items = await Storage.multiGet(allKeys);
+        items.forEach(([key, value]) => {
+            if (value !== null) {
+                OnyxStore.set(key, value);
+            }
+        });
+    }
+
+    console.log('[Onyx] Initialized with', allKeys.length, 'keys');
 }
 
 /**
- * Get a value from storage (async)
- * First checks OnyxStore (in-memory), then falls back to Storage if not found
+ * Get a value from the store
  */
 async function get<T = OnyxValue>(key: OnyxKey): Promise<T | null> {
-    // Check in-memory store first
-    const storeValue = OnyxStore.getValue<T>(key);
-    if (storeValue !== null) {
-        return storeValue;
-    }
+    // Get from store (which is already in memory)
+    const value = OnyxStore.get<T>(key);
 
-    // Load from persistent storage
-    const value = await Storage.getItem(key);
-
-    // Update store if found
     if (value !== null) {
-        OnyxStore.setValue(key, value);
+        return value;
     }
 
-    return value as T;
+    // If not in store, try storage
+    const storedValue = await Storage.getItem(key);
+    if (storedValue !== null) {
+        OnyxStore.set(key, storedValue);
+        return storedValue as T;
+    }
+
+    return null;
 }
 
 /**
- * Set a value
- * Updates both OnyxStore (in-memory) and Storage (persistent)
+ * Set a value in the store and persist to storage
  */
 async function set<T = OnyxValue>(key: OnyxKey, value: T): Promise<void> {
-    // Update in-memory store (this notifies all subscribers)
-    OnyxStore.setValue(key, value);
+    // Update store (triggers listeners)
+    OnyxStore.set(key, value);
 
-    // Persist to storage
-    await Storage.setItem(key, value);
+    // Persist to storage asynchronously
+    Storage.setItem(key, value).catch((error) => {
+        console.error('[Onyx] Failed to persist to storage:', error);
+    });
 }
 
 /**
  * Merge a value with existing data
+ * For objects: performs shallow merge
+ * For arrays: replaces the array
+ * For other types: replaces the value
  */
 async function merge<T = OnyxValue>(key: OnyxKey, changes: Partial<T> | T): Promise<void> {
-    // Get current value (from store or storage)
-    const currentValue = await get<T>(key);
+    // Merge in store (triggers listeners)
+    OnyxStore.merge<T>(key, changes);
 
-    let newValue: T;
-
-    // Merge logic
-    if (currentValue !== null && typeof currentValue === 'object' && !Array.isArray(currentValue)) {
-        // Object: shallow merge
-        newValue = {...currentValue, ...changes} as T;
-    } else {
-        // Array or primitive: replace
-        newValue = changes as T;
-    }
-
-    // Set the new value
-    await set(key, newValue);
+    // Persist to storage asynchronously
+    const newValue = OnyxStore.get(key);
+    Storage.setItem(key, newValue).catch((error) => {
+        console.error('[Onyx] Failed to persist to storage:', error);
+    });
 }
 
 /**
- * Merge collection - set multiple collection members at once
- * This is much more efficient with collection-based storage
+ * Merge a collection of values
+ * More efficient than individual merges
  */
-async function mergeCollection<T = OnyxValue>(collectionKey: OnyxKey, collection: Record<OnyxKey, Partial<T> | T>): Promise<void> {
-    // Load each member, merge, and collect updates
-    const updates: Record<OnyxKey, T> = {};
+async function mergeCollection<T = OnyxValue>(collectionKey: OnyxKey, collection: Record<OnyxKey, T>): Promise<void> {
+    // Merge in store (single notification)
+    OnyxStore.mergeCollection(collection);
 
-    for (const [key, changes] of Object.entries(collection)) {
-        const currentValue = await get<T>(key);
+    // Persist to storage asynchronously (batch operation)
+    const items = Object.entries(collection).map(([key, value]) => {
+        const currentValue = OnyxStore.get(key);
+        return [key, currentValue] as [OnyxKey, OnyxValue];
+    });
 
-        if (currentValue !== null && typeof currentValue === 'object' && !Array.isArray(currentValue)) {
-            updates[key] = {...currentValue, ...changes} as T;
-        } else {
-            updates[key] = changes as T;
-        }
-    }
-
-    // Update store (notifies subscribers once)
-    OnyxStore.setValues(updates);
-
-    // Persist to storage (single write for entire collection)
-    await Storage.setCollectionMembers(collectionKey, updates);
+    Storage.multiSet(items).catch((error) => {
+        console.error('[Onyx] Failed to persist collection to storage:', error);
+    });
 }
 
 /**
- * Remove a key
+ * Remove a key from the store and storage
  */
 async function remove(key: OnyxKey): Promise<void> {
-    // Remove from store
-    OnyxStore.removeValue(key);
+    // Remove from store (triggers listeners)
+    OnyxStore.remove(key);
 
-    // Remove from storage
-    await Storage.removeItem(key);
+    // Remove from storage asynchronously
+    Storage.removeItem(key).catch((error) => {
+        console.error('[Onyx] Failed to remove from storage:', error);
+    });
 }
 
 /**
- * Clear all data
+ * Clear all data from store and storage
  */
 async function clear(): Promise<void> {
-    // Clear store
+    // Clear store (triggers listeners)
     OnyxStore.clear();
 
-    // Clear storage
-    await Storage.clear();
+    // Clear storage asynchronously
+    Storage.clear().catch((error) => {
+        console.error('[Onyx] Failed to clear storage:', error);
+    });
 
-    console.log('[Onyx StoreBased] Cleared all data');
+    console.log('[Onyx] Cleared all data');
 }
 
 /**
- * Connect to an Onyx key (non-React)
- * Creates a subscription that listens to the global store
+ * Connect to an Onyx key and listen for changes
  */
 function connect<T = OnyxValue>(options: ConnectOptions<T>): Connection {
+    const connectionId = `connection_${connectionIdCounter++}`;
     const {key, callback} = options;
-    const connectionId = `conn_${nextConnectionId++}`;
 
-    // Track the last value to avoid unnecessary callbacks
-    let lastValue: T | null = null;
-
-    // Subscribe to the global store
-    const unsubscribe = OnyxStore.subscribe(() => {
-        // When store changes, check if our key changed
-        const newValue = OnyxStore.getValue<T>(key);
-
-        // Only call callback if value actually changed
-        if (newValue !== lastValue) {
-            lastValue = newValue;
-            callback(newValue, key);
+    // Create a listener that filters for the specific key
+    const listener = () => {
+        if (isCollectionKey(key)) {
+            // Collection key - get all matching keys
+            const collection = OnyxStore.getCollection(key);
+            callback(collection as T, key);
+        } else {
+            // Regular key
+            const value = OnyxStore.get<T>(key);
+            callback(value, key);
         }
+    };
+
+    // Subscribe to the store
+    const unsubscribe = OnyxStore.subscribe(listener);
+
+    // Store connection info
+    connections.set(connectionId, {
+        key,
+        callback,
+        unsubscribe,
     });
 
-    // Store connection metadata
-    connections.set(connectionId, {key, callback, unsubscribe});
-
-    // Initialize with current value
-    get<T>(key).then((value) => {
-        lastValue = value;
-        callback(value, key);
-    });
+    // Call callback with initial value
+    listener();
 
     return {id: connectionId};
 }
@@ -180,18 +216,19 @@ function connect<T = OnyxValue>(options: ConnectOptions<T>): Connection {
  * Disconnect from an Onyx key
  */
 function disconnect(connection: Connection): void {
-    const conn = connections.get(connection.id);
-    if (conn) {
-        conn.unsubscribe();
+    const connectionInfo = connections.get(connection.id);
+
+    if (connectionInfo) {
+        connectionInfo.unsubscribe();
         connections.delete(connection.id);
     }
 }
 
 /**
- * Get all keys
+ * Get all keys from the store
  */
 async function getAllKeys(): Promise<OnyxKey[]> {
-    return Storage.getAllKeys();
+    return OnyxStore.getAllKeys();
 }
 
 /**
@@ -201,6 +238,7 @@ function getDebugInfo() {
     return {
         ...OnyxStore.getDebugInfo(),
         connectionCount: connections.size,
+        cacheStats: Cache.getStats(),
     };
 }
 

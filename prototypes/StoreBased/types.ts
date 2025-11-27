@@ -1,6 +1,6 @@
 /**
  * Store-Based Onyx Types
- * Single global store approach
+ * This is a prototype implementation focusing on global store pattern
  */
 
 // Type for any Onyx key (string)
@@ -12,17 +12,25 @@ export type OnyxValue = unknown;
 // Type for collection keys (keys ending with '_')
 export type CollectionKey = string;
 
-// The global state shape - maps keys to values
-export type OnyxState = Record<OnyxKey, OnyxValue>;
+// The global store state structure
+export type StoreState = Record<OnyxKey, OnyxValue>;
 
-// Callback function for non-React subscribers
+// Listener function that gets called when store changes
+export type StoreListener = () => void;
+
+// Selector function to extract data from store
+export type Selector<TValue = OnyxValue, TReturnValue = TValue> = (state: StoreState) => TReturnValue;
+
+// Callback function types
 export type Callback<T = OnyxValue> = (value: T | null, key?: OnyxKey) => void;
+export type CollectionCallback<T = OnyxValue> = (collection: Record<OnyxKey, T>) => void;
 
-// Selector function to extract data from state
-export type Selector<T> = (state: OnyxState) => T;
-
-// Subscription listener for the global store
-export type Listener = () => void;
+// Connection options
+export interface ConnectOptions<T = OnyxValue> {
+    key: OnyxKey;
+    callback: Callback<T> | CollectionCallback<T>;
+    waitForCollectionCallback?: boolean;
+}
 
 // Connection object returned by connect
 export interface Connection {
@@ -42,11 +50,9 @@ export interface StorageProvider {
     removeItem(key: OnyxKey): Promise<void>;
     getAllKeys(): Promise<OnyxKey[]>;
     clear(): Promise<void>;
+    multiSet?(items: Array<[OnyxKey, OnyxValue]>): Promise<void>;
+    multiGet?(keys: OnyxKey[]): Promise<Array<[OnyxKey, OnyxValue | null]>>;
 }
 
-// Connect options for non-React usage
-export interface ConnectOptions<T = OnyxValue> {
-    key: OnyxKey;
-    callback: Callback<T>;
-    waitForCollectionCallback?: boolean;
-}
+// Subscription callback type
+export type SubscriptionCallback<T = OnyxValue> = (value: T | null, key: OnyxKey) => void;

@@ -1,170 +1,150 @@
 /**
- * Cache Layer with LRU Eviction
- * Provides in-memory caching for StoreBased approach
+ * Cache - In-Memory LRU Cache
+ *
+ * Provides fast synchronous access to frequently used data.
+ * Uses Least Recently Used (LRU) eviction policy.
+ *
+ * Note: In StoreBased approach, the OnyxStore itself acts as a cache.
+ * This Cache is optional and can be used as a secondary cache for persistence layer.
  */
 
 import type {OnyxKey, OnyxValue} from './types';
 
 /**
- * Cache class with LRU (Least Recently Used) eviction support
+ * Cache entry with access tracking
  */
-class Cache {
-    /** Map storing the cached data */
-    private cache: Map<OnyxKey, OnyxValue>;
+interface CacheEntry {
+    value: OnyxValue;
+    lastAccessed: number;
+}
 
-    /** Maximum number of keys to cache (0 = unlimited) */
-    private maxSize: number;
+/**
+ * The cache storage
+ */
+const cache = new Map<OnyxKey, CacheEntry>();
 
-    /** Set tracking access order (most recent at the end) */
-    private accessOrder: Set<OnyxKey>;
+/**
+ * Maximum number of keys to cache
+ */
+let maxSize = 1000;
 
-    constructor() {
-        this.cache = new Map();
-        this.maxSize = 1000;
-        this.accessOrder = new Set();
+/**
+ * Set the maximum cache size
+ */
+function setMaxSize(size: number): void {
+    maxSize = size;
+    evictIfNeeded();
+}
+
+/**
+ * Get a value from cache
+ */
+function get(key: OnyxKey): OnyxValue | undefined {
+    const entry = cache.get(key);
+
+    if (entry) {
+        // Update last accessed time
+        entry.lastAccessed = Date.now();
+        return entry.value;
     }
 
-    /**
-     * Set the maximum number of keys to cache
-     */
-    setMaxSize(size: number): void {
-        this.maxSize = size;
-        this.evictIfNeeded();
+    return undefined;
+}
+
+/**
+ * Set a value in cache
+ */
+function set(key: OnyxKey, value: OnyxValue): void {
+    cache.set(key, {
+        value,
+        lastAccessed: Date.now(),
+    });
+
+    evictIfNeeded();
+}
+
+/**
+ * Delete a key from cache
+ */
+function deleteKey(key: OnyxKey): void {
+    cache.delete(key);
+}
+
+/**
+ * Check if a key exists in cache
+ */
+function has(key: OnyxKey): boolean {
+    return cache.has(key);
+}
+
+/**
+ * Clear the entire cache
+ */
+function clear(): void {
+    cache.clear();
+}
+
+/**
+ * Get the current cache size
+ */
+function getSize(): number {
+    return cache.size;
+}
+
+/**
+ * Evict least recently used items if cache is over max size
+ */
+function evictIfNeeded(): void {
+    if (cache.size <= maxSize) {
+        return;
     }
 
-    /**
-     * Get a value from cache
-     */
-    get(key: OnyxKey): OnyxValue | undefined {
-        if (!this.cache.has(key)) {
-            return undefined;
+    // Find the least recently used key
+    let oldestKey: OnyxKey | null = null;
+    let oldestTime = Infinity;
+
+    cache.forEach((entry, key) => {
+        if (entry.lastAccessed < oldestTime) {
+            oldestTime = entry.lastAccessed;
+            oldestKey = key;
         }
+    });
 
-        // Update access order (move to end = most recently used)
-        this.accessOrder.delete(key);
-        this.accessOrder.add(key);
-
-        return this.cache.get(key);
-    }
-
-    /**
-     * Set a value in cache
-     */
-    set(key: OnyxKey, value: OnyxValue): void {
-        // Update access order
-        this.accessOrder.delete(key);
-        this.accessOrder.add(key);
-
-        this.cache.set(key, value);
-
-        // Evict if cache is too large
-        this.evictIfNeeded();
-    }
-
-    /**
-     * Set multiple values at once
-     */
-    setMany(entries: Record<OnyxKey, OnyxValue>): void {
-        Object.entries(entries).forEach(([key, value]) => {
-            // Update access order
-            this.accessOrder.delete(key);
-            this.accessOrder.add(key);
-
-            this.cache.set(key, value);
-        });
-
-        // Evict if cache is too large
-        this.evictIfNeeded();
-    }
-
-    /**
-     * Check if a key exists in cache
-     */
-    has(key: OnyxKey): boolean {
-        return this.cache.has(key);
-    }
-
-    /**
-     * Remove a key from cache
-     */
-    delete(key: OnyxKey): void {
-        this.cache.delete(key);
-        this.accessOrder.delete(key);
-    }
-
-    /**
-     * Clear the entire cache
-     */
-    clear(): void {
-        this.cache.clear();
-        this.accessOrder.clear();
-    }
-
-    /**
-     * Get all cached keys
-     */
-    getAllKeys(): OnyxKey[] {
-        return Array.from(this.cache.keys());
-    }
-
-    /**
-     * Get all cached data as an object
-     * This is what OnyxStore.getState() will return
-     */
-    getAllData(): Record<OnyxKey, OnyxValue> {
-        const data: Record<OnyxKey, OnyxValue> = {};
-        this.cache.forEach((value, key) => {
-            data[key] = value;
-        });
-        return data;
-    }
-
-    /**
-     * Get cache size
-     */
-    getSize(): number {
-        return this.cache.size;
-    }
-
-    /**
-     * Get collection members from cache
-     * Returns all keys that start with the collection key prefix
-     */
-    getCollectionMembers(collectionKey: OnyxKey): Record<OnyxKey, OnyxValue> {
-        const collection: Record<OnyxKey, OnyxValue> = {};
-
-        for (const [key, value] of this.cache.entries()) {
-            if (key.startsWith(collectionKey)) {
-                collection[key] = value;
-            }
-        }
-
-        return collection;
-    }
-
-    /**
-     * Evict least recently used keys if cache exceeds max size
-     */
-    private evictIfNeeded(): void {
-        if (this.maxSize <= 0 || this.cache.size <= this.maxSize) {
-            return;
-        }
-
-        // Evict keys until we're under the max size
-        const keysToEvict = this.cache.size - this.maxSize;
-        const accessOrderArray = Array.from(this.accessOrder);
-
-        for (let i = 0; i < keysToEvict; i++) {
-            const keyToEvict = accessOrderArray[i];
-            if (keyToEvict) {
-                this.cache.delete(keyToEvict);
-                this.accessOrder.delete(keyToEvict);
-            }
-        }
-
-        console.log(`[Cache] Evicted ${keysToEvict} keys (LRU)`);
+    // Remove the oldest entry
+    if (oldestKey) {
+        cache.delete(oldestKey);
     }
 }
 
-const cache = new Cache();
-export default cache;
+/**
+ * Get all keys in cache
+ */
+function getAllKeys(): OnyxKey[] {
+    return Array.from(cache.keys());
+}
+
+/**
+ * Get cache statistics
+ */
+function getStats() {
+    return {
+        size: cache.size,
+        maxSize,
+        utilizationPercent: Math.round((cache.size / maxSize) * 100),
+    };
+}
+
+// Export the Cache API
+const Cache = {
+    setMaxSize,
+    get,
+    set,
+    delete: deleteKey,
+    has,
+    clear,
+    getSize,
+    getAllKeys,
+    getStats,
+};
+
+export default Cache;

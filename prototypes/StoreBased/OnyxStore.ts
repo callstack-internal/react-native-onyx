@@ -1,209 +1,211 @@
 /**
- * OnyxStore - Global Store for Subscriber Management
+ * OnyxStore - Global Store Implementation
  *
- * KEY DIFFERENCE from KeyBased approach:
- * - KeyBased: Each key has its own Set of subscribers
- * - StoreBased: ONE global store, all components subscribe to it, use selectors to read slices
+ * Central store that holds all Onyx state in memory.
+ * Inspired by Zustand's store pattern.
  *
- * Architecture:
- * - Cache: Holds the actual data with LRU eviction
- * - OnyxStore: Manages subscribers, delegates data storage to Cache
- *
- * Benefits:
- * - Stable subscription target (components always subscribe to the same store object)
- * - Subscription logic in hooks stays constant
- * - Reduced number of subscription/unsubscription operations
- * - Simpler mental model (one store, many readers)
+ * Key differences from KeyBased:
+ * - Single global state object (not per-key management)
+ * - All listeners subscribe to the store (not per-key subscriptions)
+ * - Efficient for concentrated workloads (same keys accessed frequently)
  */
 
-import Cache from './Cache';
-import type {OnyxKey, OnyxValue, OnyxState, Listener} from './types';
+import type {StoreState, StoreListener, OnyxKey, OnyxValue} from './types';
 
 /**
- * OnyxStore - Global state store with subscriber management
- * Data is stored in Cache, this class manages subscriptions
+ * The global store state
  */
-class OnyxStore {
-    /** Set of all listeners subscribed to the store */
-    private listeners: Set<Listener>;
+let state: StoreState = {};
 
-    /** Flag to track if store has been initialized */
-    private initialized: boolean;
+/**
+ * Set of all listeners subscribed to the store
+ */
+const listeners = new Set<StoreListener>();
 
-    constructor() {
-        this.listeners = new Set();
-        this.initialized = false;
-    }
+/**
+ * Version number for tracking state changes
+ * Increments on every mutation
+ */
+let version = 0;
 
-    /**
-     * Initialize the store
-     */
-    init(): void {
-        if (this.initialized) {
-            return;
-        }
-        this.initialized = true;
-    }
-
-    /**
-     * Get the entire state object (synchronous)
-     * This is what subscribers read from
-     * Returns data from Cache
-     */
-    getState(): OnyxState {
-        return Cache.getAllData();
-    }
-
-    /**
-     * Get a specific key's value (synchronous)
-     */
-    getValue<T = OnyxValue>(key: OnyxKey): T | null {
-        const value = Cache.get(key);
-        return value !== undefined ? (value as T) : null;
-    }
-
-    /**
-     * Set a value in the store
-     * Updates cache and notifies ALL listeners
-     */
-    setValue(key: OnyxKey, value: OnyxValue): void {
-        if (value === null || value === undefined) {
-            Cache.delete(key);
-        } else {
-            Cache.set(key, value);
-        }
-
-        // Notify all listeners that state changed
-        this.notifyListeners();
-    }
-
-    /**
-     * Set multiple values at once
-     * More efficient than calling setValue multiple times
-     */
-    setValues(updates: Record<OnyxKey, OnyxValue>): void {
-        // Filter out nulls and update cache
-        const filtered: Record<OnyxKey, OnyxValue> = {};
-        Object.entries(updates).forEach(([key, value]) => {
-            if (value === null || value === undefined) {
-                Cache.delete(key);
-            } else {
-                filtered[key] = value;
-            }
-        });
-
-        // Batch update cache
-        Cache.setMany(filtered);
-
-        // Notify once after all updates
-        this.notifyListeners();
-    }
-
-    /**
-     * Merge a value with existing data
-     */
-    mergeValue<T = OnyxValue>(key: OnyxKey, changes: Partial<T> | T): void {
-        const currentValue = this.getValue<T>(key);
-        let newValue: T;
-
-        if (currentValue !== null && typeof currentValue === 'object' && !Array.isArray(currentValue)) {
-            // Object: shallow merge
-            newValue = {...currentValue, ...changes} as T;
-        } else {
-            // Array or primitive: replace
-            newValue = changes as T;
-        }
-
-        this.setValue(key, newValue);
-    }
-
-    /**
-     * Remove a key from the store
-     */
-    removeValue(key: OnyxKey): void {
-        Cache.delete(key);
-        this.notifyListeners();
-    }
-
-    /**
-     * Clear all state
-     */
-    clear(): void {
-        Cache.clear();
-        this.notifyListeners();
-    }
-
-    /**
-     * Subscribe to the store
-     * All subscribers listen to the SAME store object
-     * They use selectors in their hooks to extract only the data they need
-     *
-     * Returns an unsubscribe function
-     */
-    subscribe(listener: Listener): () => void {
-        this.listeners.add(listener);
-
-        // Return unsubscribe function
-        return () => {
-            this.listeners.delete(listener);
-        };
-    }
-
-    /**
-     * Notify all listeners that state has changed
-     * Called after any state mutation
-     *
-     * NOTE: This notifies ALL listeners, not just ones affected by the change.
-     * It's up to the listeners (via selectors in useOnyx) to determine if they need to re-render.
-     */
-    private notifyListeners(): void {
-        this.listeners.forEach((listener) => {
-            listener();
-        });
-    }
-
-    /**
-     * Get the number of active listeners
-     */
-    getListenerCount(): number {
-        return this.listeners.size;
-    }
-
-    /**
-     * Check if a key exists in the store
-     */
-    hasKey(key: OnyxKey): boolean {
-        return Cache.has(key);
-    }
-
-    /**
-     * Get all keys in the store
-     */
-    getAllKeys(): OnyxKey[] {
-        return Cache.getAllKeys();
-    }
-
-    /**
-     * Get collection members (keys that start with collection prefix)
-     */
-    getCollectionMembers(collectionKey: OnyxKey): Record<OnyxKey, OnyxValue> {
-        return Cache.getCollectionMembers(collectionKey);
-    }
-
-    /**
-     * Get debug info
-     */
-    getDebugInfo() {
-        return {
-            keyCount: Cache.getSize(),
-            cacheSize: Cache.getSize(),
-            listenerCount: this.listeners.size,
-            initialized: this.initialized,
-        };
-    }
+/**
+ * Get the current store state
+ */
+function getState(): StoreState {
+    return state;
 }
 
-// Create and export singleton instance
-const onyxStore = new OnyxStore();
+/**
+ * Get the current version
+ */
+function getVersion(): number {
+    return version;
+}
 
-export default onyxStore;
+/**
+ * Get a specific key from the store
+ */
+function get<T = OnyxValue>(key: OnyxKey): T | null {
+    return (state[key] as T) ?? null;
+}
+
+/**
+ * Set a value in the store
+ */
+function set(key: OnyxKey, value: OnyxValue): void {
+    state[key] = value;
+    version++;
+    notifyListeners();
+}
+
+/**
+ * Merge a value with existing data in the store
+ * For objects: performs shallow merge
+ * For arrays: replaces the array
+ * For other types: replaces the value
+ */
+function merge<T = OnyxValue>(key: OnyxKey, changes: Partial<T> | T): void {
+    const currentValue = state[key];
+
+    let newValue: T;
+
+    // Merge logic
+    if (currentValue !== null && currentValue !== undefined && typeof currentValue === 'object' && !Array.isArray(currentValue)) {
+        // Object: shallow merge
+        newValue = {...(currentValue as object), ...(changes as object)} as T;
+    } else {
+        // Array or primitive: replace
+        newValue = changes as T;
+    }
+
+    state[key] = newValue;
+    version++;
+    notifyListeners();
+}
+
+/**
+ * Merge multiple keys at once (batch operation)
+ */
+function mergeCollection(collection: Record<OnyxKey, OnyxValue>): void {
+    // Update all keys
+    Object.entries(collection).forEach(([key, value]) => {
+        const currentValue = state[key];
+
+        if (currentValue !== null && currentValue !== undefined && typeof currentValue === 'object' && !Array.isArray(currentValue)) {
+            // Object: shallow merge
+            state[key] = {...(currentValue as object), ...(value as object)};
+        } else {
+            // Array or primitive: replace
+            state[key] = value;
+        }
+    });
+
+    // Only increment version and notify once after all updates
+    version++;
+    notifyListeners();
+}
+
+/**
+ * Remove a key from the store
+ */
+function remove(key: OnyxKey): void {
+    delete state[key];
+    version++;
+    notifyListeners();
+}
+
+/**
+ * Clear the entire store
+ */
+function clear(): void {
+    state = {};
+    version++;
+    notifyListeners();
+}
+
+/**
+ * Subscribe to store changes
+ * Returns an unsubscribe function
+ */
+function subscribe(listener: StoreListener): () => void {
+    listeners.add(listener);
+
+    // Return unsubscribe function
+    return () => {
+        listeners.delete(listener);
+    };
+}
+
+/**
+ * Notify all listeners that the store has changed
+ */
+function notifyListeners(): void {
+    listeners.forEach((listener) => listener());
+}
+
+/**
+ * Get the number of active listeners
+ */
+function getListenerCount(): number {
+    return listeners.size;
+}
+
+/**
+ * Get all keys in the store
+ */
+function getAllKeys(): OnyxKey[] {
+    return Object.keys(state);
+}
+
+/**
+ * Check if a key exists in the store
+ */
+function has(key: OnyxKey): boolean {
+    return key in state;
+}
+
+/**
+ * Get collection members (keys that start with collectionKey)
+ */
+function getCollection<T = OnyxValue>(collectionKey: OnyxKey): Record<OnyxKey, T> {
+    const collection: Record<OnyxKey, T> = {};
+
+    Object.keys(state).forEach((key) => {
+        if (key.startsWith(collectionKey) && key !== collectionKey) {
+            collection[key] = state[key] as T;
+        }
+    });
+
+    return collection;
+}
+
+/**
+ * Get debugging info
+ */
+function getDebugInfo() {
+    return {
+        keyCount: Object.keys(state).length,
+        listenerCount: listeners.size,
+        version,
+    };
+}
+
+// Export the store API
+const OnyxStore = {
+    getState,
+    getVersion,
+    get,
+    set,
+    merge,
+    mergeCollection,
+    remove,
+    clear,
+    subscribe,
+    getListenerCount,
+    getAllKeys,
+    has,
+    getCollection,
+    getDebugInfo,
+};
+
+export default OnyxStore;

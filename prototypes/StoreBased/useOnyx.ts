@@ -1,157 +1,133 @@
 /**
- * useOnyx Hook - Store-Based Approach
+ * useOnyx Hook - Store-Based Implementation
  *
- * KEY DIFFERENCE from KeyBased:
- * - KeyBased: Each component subscribes to specific keys (N subscriptions for N components)
- * - StoreBased: All components subscribe to the SAME store (1 subscription target)
+ * React hook for subscribing to Onyx data.
+ * Uses useSyncExternalStore for optimal React 18 integration.
  *
- * Benefits:
- * - Stable subscription target (always subscribing to same store object)
- * - Subscription logic stays constant in the hook
- * - Hook just listens to the store and re-renders when it changes
- * - Selector determines what data to extract (prevents unnecessary re-renders)
+ * Key differences from KeyBased:
+ * - Subscribes to global store (not per-key subscriptions)
+ * - Uses selectors to extract specific data
+ * - All hooks share the same subscription target (stable function)
+ * - More efficient when many components subscribe to same keys
  */
 
-import {useSyncExternalStore, useCallback, useMemo, useRef, useEffect} from 'react';
+import {useSyncExternalStore, useMemo} from 'react';
 import OnyxStore from './OnyxStore';
-import Onyx from './Onyx';
-import type {OnyxKey, OnyxValue, OnyxState, Selector} from './types';
+import type {OnyxKey, OnyxValue, StoreState} from './types';
 
 /**
- * Selector function for transforming Onyx data
- */
-type UseOnyxSelector<TValue, TReturnValue> = (data: TValue | null) => TReturnValue;
-
-/**
- * Options for useOnyx hook
+ * Hook options
  */
 interface UseOnyxOptions<TValue, TReturnValue> {
     /**
-     * Selector to transform the data before returning it
-     * This allows components to subscribe to only a subset of the data
+     * Selector function to extract specific data from the value
      */
-    selector?: UseOnyxSelector<TValue, TReturnValue>;
+    selector?: (data: TValue | null) => TReturnValue;
 
     /**
-     * If set to false, won't initialize with stored values
+     * Whether to initialize with stored values
+     * Default: true
      */
     initWithStoredValues?: boolean;
 }
 
 /**
- * Result metadata
+ * Metadata about the hook state
  */
-interface ResultMetadata {
+interface UseOnyxMetadata {
     status: 'loading' | 'loaded';
 }
 
 /**
- * Return type for useOnyx
+ * Check if a key is a collection key (ends with '_')
  */
-type UseOnyxResult<TValue> = [TValue | null, ResultMetadata];
+function isCollectionKey(key: OnyxKey): boolean {
+    return key.endsWith('_');
+}
 
 /**
  * useOnyx Hook
  *
- * Subscribes to the global OnyxStore and extracts data for a specific key
+ * Subscribe to an Onyx key and re-render when it changes.
+ *
+ * @param key - The Onyx key to subscribe to
+ * @param options - Optional configuration
+ * @returns [value, metadata] tuple
  *
  * @example
- * ```tsx
  * // Basic usage
  * const [session, metadata] = useOnyx('session');
  *
+ * @example
  * // With selector
- * const [userId, metadata] = useOnyx('session', {
- *   selector: (session) => session?.userId
+ * const [email] = useOnyx('session', {
+ *   selector: (session) => session?.email
  * });
- * ```
  */
-function useOnyx<TValue = OnyxValue, TReturnValue = TValue>(key: OnyxKey, options?: UseOnyxOptions<TValue, TReturnValue>): UseOnyxResult<TReturnValue> {
+function useOnyx<TValue = OnyxValue, TReturnValue = TValue>(
+    key: OnyxKey,
+    options?: UseOnyxOptions<TValue, TReturnValue>,
+): [TReturnValue | null, UseOnyxMetadata] {
     const {selector, initWithStoredValues = true} = options ?? {};
 
-    // Track if we've loaded the initial value
-    const hasLoadedRef = useRef(false);
-
-    // Load initial value from storage if needed
-    useEffect(() => {
-        if (initWithStoredValues && !hasLoadedRef.current) {
-            hasLoadedRef.current = true;
-
-            // Check if value is already in store
-            if (!OnyxStore.hasKey(key)) {
-                // Load from storage
-                Onyx.get(key).then(() => {
-                    // Value is now in store, re-render will happen automatically
-                    // because we're subscribed to the store
-                });
-            }
-        }
-    }, [key, initWithStoredValues]);
+    /**
+     * Subscribe function - subscribes to the global store
+     * This function is stable and doesn't change, making it efficient
+     */
+    const subscribe = useMemo(() => {
+        return (callback: () => void) => {
+            return OnyxStore.subscribe(callback);
+        };
+    }, []);
 
     /**
-     * Create a selector that extracts this key's value from the global state
+     * Snapshot function - gets the current value from the store
+     * Uses selector if provided
      */
-    const keySelector = useMemo((): Selector<TReturnValue | null> => {
-        // Memoize the selector to avoid unnecessary recalculations
-        let lastState: OnyxState | null = null;
-        let lastOutput: TReturnValue | null = null;
+    const getSnapshot = useMemo(() => {
+        return (): TReturnValue | null => {
+            if (isCollectionKey(key)) {
+                // Collection key - get all matching keys
+                const collection = OnyxStore.getCollection<TValue>(key);
+                const value = collection as unknown as TValue;
 
-        return (state: OnyxState) => {
-            // Only recompute if state reference changed
-            if (state !== lastState) {
-                const value = state[key] !== undefined ? (state[key] as TValue) : null;
+                if (selector) {
+                    return selector(value);
+                }
 
-                // Apply user's selector if provided
-                const result = selector ? selector(value) : (value as unknown as TReturnValue);
-
-                lastState = state;
-                lastOutput = result;
+                return value as unknown as TReturnValue;
             }
 
-            return lastOutput;
+            // Regular key
+            const value = OnyxStore.get<TValue>(key);
+
+            if (selector) {
+                return selector(value);
+            }
+
+            return value as unknown as TReturnValue;
         };
     }, [key, selector]);
 
     /**
-     * Subscribe function for useSyncExternalStore
-     * This is STABLE - we always subscribe to the same store
+     * Server snapshot function (for SSR)
      */
-    const subscribe = useCallback((onStoreChange: () => void) => {
-        // Subscribe to the GLOBAL store (not a specific key)
-        return OnyxStore.subscribe(onStoreChange);
-    }, []); // Empty deps - subscription target never changes!
-
-    /**
-     * Get snapshot function for useSyncExternalStore
-     * Extracts our data from the global state using the selector
-     */
-    const getSnapshot = useCallback((): TReturnValue | null => {
-        const state = OnyxStore.getState();
-        return keySelector(state);
-    }, [keySelector]);
-
-    /**
-     * Server snapshot (for SSR)
-     */
-    const getServerSnapshot = useCallback((): TReturnValue | null => {
-        return null;
+    const getServerSnapshot = useMemo(() => {
+        return (): TReturnValue | null => null;
     }, []);
 
-    // Use React's useSyncExternalStore
-    // KEY POINT: We're subscribing to the SAME store for all hooks
-    const data = useSyncExternalStore(
-        subscribe, // Always the same function
-        getSnapshot, // Changes when key or selector changes
-        getServerSnapshot,
+    // Subscribe to the store
+    const value = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+    // Metadata
+    const metadata: UseOnyxMetadata = useMemo(
+        () => ({
+            status: initWithStoredValues ? 'loaded' : 'loaded',
+        }),
+        [initWithStoredValues],
     );
 
-    // Determine metadata
-    const metadata: ResultMetadata = {
-        status: hasLoadedRef.current ? 'loaded' : 'loading',
-    };
-
-    return [data, metadata];
+    return [value, metadata];
 }
 
 export default useOnyx;
-export type {UseOnyxSelector, UseOnyxOptions, ResultMetadata, UseOnyxResult};
