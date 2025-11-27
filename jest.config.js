@@ -1,11 +1,11 @@
 module.exports = {
     preset: 'react-native',
-    roots: ['<rootDir>/lib', '<rootDir>/tests'],
+    roots: ['<rootDir>/lib', '<rootDir>/tests', '<rootDir>/prototypes'],
     transform: {
         '\\.[jt]sx?$': 'babel-jest',
     },
     testPathIgnorePatterns: ['<rootDir>/node_modules/', '<rootDir>/tests/unit/mocks/', '<rootDir>/tests/e2e/', '<rootDir>/tests/types/'],
-    testMatch: ['**/tests/unit/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'],
+    testMatch: ['**/tests/unit/**/*.[jt]s?(x)', '**/?(*.)+(spec|test|perf-test).[jt]s?(x)'],
     globals: {
         __DEV__: true,
         WebSocket: {},
