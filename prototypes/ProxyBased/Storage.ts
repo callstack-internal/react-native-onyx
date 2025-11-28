@@ -47,10 +47,6 @@ class Storage {
         this.provider = new MemoryStorage();
     }
 
-    setProvider(provider: StorageProvider): void {
-        this.provider = provider;
-    }
-
     async getItem(key: OnyxKey): Promise<OnyxValue | null> {
         return this.provider.getItem(key);
     }

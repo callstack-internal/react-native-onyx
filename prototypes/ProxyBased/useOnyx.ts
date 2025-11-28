@@ -5,14 +5,11 @@
  * - Returns a snapshot (immutable copy) of the state
  * - Automatically subscribes to changes
  * - Re-renders when subscribed data changes
- *
- * Similar to: Valtio's useSnapshot
  */
 
 import {useSyncExternalStore, useCallback, useEffect, useRef} from 'react';
 import {snapshot, subscribe} from './ReactiveSystem';
-import {state} from './Onyx';
-import Onyx from './Onyx';
+import Onyx, {state} from './Onyx';
 import type {OnyxKey, OnyxValue} from './types';
 
 /**

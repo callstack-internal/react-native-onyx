@@ -5,13 +5,11 @@
  * - No explicit set() or merge() calls needed
  * - Just mutate the state object directly
  * - Proxies automatically detect changes and notify subscribers
- *
- * Similar to: Valtio
  */
 
-import {proxy, snapshot, subscribe} from './ReactiveSystem';
+import {proxy, subscribe} from './ReactiveSystem';
 import Storage from './Storage';
-import type {OnyxKey, OnyxValue, Connection, ConnectOptions, InitOptions, Callback} from './types';
+import type {OnyxKey, OnyxValue, Connection, ConnectOptions, Callback} from './types';
 
 /**
  * The global reactive state object
@@ -28,7 +26,7 @@ let nextConnectionId = 1;
 /**
  * Initialize Onyx
  */
-async function init(options: InitOptions = {}): Promise<void> {
+async function init(): Promise<void> {
     console.log('[Onyx ProxyBased] Initialized');
     console.log('[Onyx ProxyBased] Tip: Mutate state directly! e.g., state.session = {...}');
 }
@@ -148,6 +146,7 @@ function connect<T = OnyxValue>(options: ConnectOptions<T>): Connection {
     });
 
     // Store connection metadata
+    // @ts-expect-error expected
     connections.set(connectionId, {key, callback, unsubscribe});
 
     // Initialize with current value
@@ -191,23 +190,15 @@ function getDebugInfo() {
 const Onyx = {
     // The reactive state object - mutate this directly!
     state,
-
-    // Initialization
     init,
-
-    // Compatibility methods (prefer direct mutation)
     get,
     set,
     merge,
     mergeCollection,
     remove,
     clear,
-
-    // Subscriptions
     connect,
     disconnect,
-
-    // Utilities
     getAllKeys,
     getDebugInfo,
 };

@@ -6,11 +6,7 @@
  * 2. Mutate directly - no set() or merge() needed
  * 3. Subscribe with snapshot() to get immutable snapshots
  * 4. Automatic change detection via Proxy traps
- *
- * Similar to: Valtio, MobX
  */
-
-import type {OnyxValue} from './types';
 
 // Global listeners that get notified on any change
 type Listener = () => void;
@@ -142,11 +138,4 @@ function notifyListeners(): void {
     listeners.forEach((listener) => listener());
 }
 
-/**
- * Get the version number (for change detection)
- */
-function getVersion(proxyObject: object): number {
-    return versionCache.get(proxyObject) || 0;
-}
-
-export {createProxy as proxy, snapshot, subscribe, getVersion};
+export {createProxy as proxy, snapshot, subscribe};
