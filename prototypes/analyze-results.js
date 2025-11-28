@@ -135,21 +135,18 @@ function generateReport(results) {
 
             if (!hasData) return;
 
-            // Find winner (lowest duration, must be at least 10% faster)
+            // Find winner (lowest duration)
             const validDurations = Object.entries(durations).filter(([_, d]) => d !== null);
             const minDuration = Math.min(...validDurations.map(([_, d]) => d));
-            let winner = 'Tie';
 
-            validDurations.forEach(([prototype, duration]) => {
-                if (duration === minDuration) {
-                    // Check if it's significantly faster (at least 10%)
-                    const otherDurations = validDurations.filter(([p]) => p !== prototype).map(([_, d]) => d);
-                    const isSignificantlyFaster = otherDurations.every((d) => duration < d * 0.9);
-                    if (isSignificantlyFaster || otherDurations.length === 0) {
-                        winner = prototype;
-                    }
-                }
-            });
+            // Find all prototypes with the minimum duration
+            const winners = validDurations.filter(([_, d]) => d === minDuration).map(([p]) => p);
+
+            // If multiple prototypes have the same minimum duration, it's a tie
+            let winner = 'Tie';
+            if (winners.length === 1) {
+                winner = winners[0];
+            }
 
             // Format row
             const cells = PROTOTYPES.map((prototype) => {
@@ -183,15 +180,14 @@ function generateReport(results) {
         if (validDurations.length === 0) return;
 
         const minDuration = Math.min(...validDurations.map(([_, d]) => d));
-        validDurations.forEach(([prototype, duration]) => {
-            if (duration === minDuration) {
-                const otherDurations = validDurations.filter(([p]) => p !== prototype).map(([_, d]) => d);
-                const isSignificantlyFaster = otherDurations.every((d) => duration < d * 0.9);
-                if (isSignificantlyFaster || otherDurations.length === 0) {
-                    wins[prototype]++;
-                }
-            }
-        });
+
+        // Find all prototypes with the minimum duration
+        const testWinners = validDurations.filter(([_, d]) => d === minDuration).map(([p]) => p);
+
+        // Only count as a win if there's a single winner (not a tie)
+        if (testWinners.length === 1) {
+            wins[testWinners[0]]++;
+        }
     });
 
     report += '### Test Wins by Prototype\n\n';
@@ -252,7 +248,7 @@ function generateReport(results) {
 
     report += '\n## How to Read This Report\n\n';
     report +=
-        '- **Winner**: The prototype with the fastest average duration for each test\n- A winner is only declared if it is at least 10% faster than others (otherwise marked as "Tie")\n- Duration values are mean execution times across multiple runs\n- Tests are run using Reassure for statistical significance\n\n';
+        '- **Winner**: The prototype with the fastest average duration for each test\n- A winner is only declared if it is faster than others (otherwise marked as "Tie")\n- Duration values are mean execution times across multiple runs\n- Tests are run using Reassure for statistical significance\n\n';
 
     report += '## Running the Tests\n\n';
     report += '```bash\n';
