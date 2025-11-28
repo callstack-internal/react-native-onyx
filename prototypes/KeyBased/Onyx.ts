@@ -208,8 +208,18 @@ async function remove(key: OnyxKey): Promise<void> {
  * Clear all data
  */
 async function clear(): Promise<void> {
+    // Get all keys before clearing (from both cache and storage)
+    const cachedKeys = Cache.getAllKeys();
+    const storageKeys = await Storage.getAllKeys();
+    const allKeys = new Set([...cachedKeys, ...storageKeys]);
+
     // Clear cache
     Cache.clear();
+
+    // Notify all subscribers that their keys have been cleared (set to null)
+    allKeys.forEach((key) => {
+        notifySubscribers(key, null);
+    });
 
     // Clear storage
     await Storage.clear();
