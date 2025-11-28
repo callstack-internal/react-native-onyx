@@ -1,242 +1,180 @@
 /**
- * Legend-State inspired Observable System
+ * Observable System - Inspired by Legend-state
  *
  * KEY CONCEPTS:
- * 1. Observables track their observers (who's watching)
- * 2. When observable value changes, notify all observers
- * 3. Fine-grained reactivity - only re-render what changed
- * 4. Automatic dependency tracking during component render
- *
- * Similar to: Legend-State, Solid.js signals, MobX observables
+ * 1. Values are wrapped in Observable objects
+ * 2. Components subscribe to observables, not raw keys
+ * 3. Fine-grained reactivity - only subscribers of a specific observable are notified
+ * 4. Observable API: .get(), .set(), .subscribe()
  */
 
-import type {OnyxKey, OnyxValue, Observer, ObservableNode, Observable} from './types';
-
-// Global tracking context - which observer is currently running
-let currentObserver: Observer | null = null;
-
-// Store all observable nodes by key
-const observableNodes = new Map<OnyxKey, ObservableNode>();
+import type {OnyxKey, OnyxValue, Listener, Observable} from './types';
+import storage from './Storage';
 
 /**
- * Get or create an observable node for a key
+ * Create an Observable that wraps a value
+ * Provides methods to get, set, merge, and subscribe to changes
  */
-function getOrCreateNode<T = OnyxValue>(key: OnyxKey): ObservableNode<T> {
-    if (!observableNodes.has(key)) {
-        observableNodes.set(key, {
-            value: null,
-            observers: new Set<Observer>(),
-            version: 0,
+function createObservable<T = OnyxValue>(key: OnyxKey, initialValue: T | null = null): Observable<T> {
+    // Current value
+    let currentValue: T | null = initialValue;
+
+    // Set of listeners subscribed to this specific observable
+    const listeners = new Set<Listener<T>>();
+
+    /**
+     * Notify all listeners of this observable
+     */
+    function notifyListeners(): void {
+        listeners.forEach((listener) => {
+            listener(currentValue);
         });
     }
-    return observableNodes.get(key) as ObservableNode<T>;
-}
 
-/**
- * Create an observable for a specific key
- * This is the core primitive that everything else builds on
- */
-export function observable<T = OnyxValue>(key: OnyxKey): Observable<T> {
-    const node = getOrCreateNode<T>(key);
+    /**
+     * Deep merge helper for objects
+     */
+    function deepMerge(target: any, source: any): any {
+        if (!target || typeof target !== 'object') {
+            return source;
+        }
 
-    return {
+        if (!source || typeof source !== 'object') {
+            return source;
+        }
+
+        if (Array.isArray(source)) {
+            return source;
+        }
+
+        const result = {...target};
+
+        for (const key in source) {
+            if (source[key] !== null && typeof source[key] === 'object' && !Array.isArray(source[key])) {
+                result[key] = deepMerge(target[key], source[key]);
+            } else {
+                result[key] = source[key];
+            }
+        }
+
+        return result;
+    }
+
+    const observable: Observable<T> = {
         /**
-         * Get the current value and track this access
-         * If called during an observer execution, adds observer to dependencies
+         * Get the current value
          */
         get(): T | null {
-            // Track this access if we're inside an observer
-            if (currentObserver) {
-                node.observers.add(currentObserver);
-            }
-            return node.value;
+            return currentValue;
         },
 
         /**
-         * Set a new value and notify all observers
+         * Set a new value
+         * Updates storage and notifies all subscribers
          */
-        set(newValue: T | null): void {
-            if (node.value !== newValue) {
-                node.value = newValue;
-                node.version++;
+        async set(value: T | null): Promise<void> {
+            currentValue = value;
 
-                // Notify all observers that depend on this observable
-                notifyObservers(node);
+            // Update storage
+            if (value === null) {
+                await storage.removeItem(key);
+            } else {
+                await storage.setItem(key, value);
             }
+
+            // Notify subscribers
+            notifyListeners();
         },
 
         /**
-         * Observe changes to this observable
+         * Merge changes with the existing value
+         * Only works for objects
+         */
+        async merge(changes: Partial<T>): Promise<void> {
+            if (currentValue === null) {
+                // If no current value, just set the changes
+                currentValue = changes as T;
+            } else if (typeof currentValue === 'object' && !Array.isArray(currentValue)) {
+                // For objects, do a deep merge
+                currentValue = deepMerge(currentValue, changes) as T;
+            } else {
+                // For primitives and arrays, replace
+                currentValue = changes as T;
+            }
+
+            // Update storage
+            await storage.setItem(key, currentValue);
+
+            // Notify subscribers
+            notifyListeners();
+        },
+
+        /**
+         * Subscribe to changes
          * Returns an unsubscribe function
          */
-        observe(observer: Observer): () => void {
-            node.observers.add(observer);
+        subscribe(listener: Listener<T>): () => void {
+            listeners.add(listener);
 
-            // Return unsubscribe function
             return () => {
-                node.observers.delete(observer);
+                listeners.delete(listener);
             };
         },
 
         /**
-         * Peek at the value without tracking the access
-         * Useful when you want to read but not create a dependency
+         * Get the key this observable is bound to
          */
-        peek(): T | null {
-            return node.value;
+        getKey(): OnyxKey {
+            return key;
+        },
+
+        /**
+         * Remove the value
+         */
+        async remove(): Promise<void> {
+            currentValue = null;
+            await storage.removeItem(key);
+            notifyListeners();
         },
     };
+
+    return observable;
 }
 
 /**
- * Notify all observers of a node that the value changed
+ * Observable registry
+ * Maps keys to their observables
  */
-function notifyObservers(node: ObservableNode): void {
-    // Create a copy of observers to avoid issues if observers modify the set during iteration
-    const observersToNotify = Array.from(node.observers);
+class ObservableRegistry {
+    private observables = new Map<OnyxKey, Observable>();
 
-    observersToNotify.forEach((observer) => {
-        try {
-            observer();
-        } catch (error) {
-            console.error('[ObservableSystem] Error in observer:', error);
+    /**
+     * Get or create an observable for a key
+     */
+    getObservable<T = OnyxValue>(key: OnyxKey): Observable<T> {
+        if (!this.observables.has(key)) {
+            this.observables.set(key, createObservable<T>(key));
         }
-    });
-}
 
-/**
- * Run a function and track which observables it accesses
- * Returns cleanup function to stop tracking
- */
-export function track(fn: () => void): () => void {
-    const observer: Observer = () => {
-        // When observable changes, re-run the function
-        const prevObserver = currentObserver;
-        currentObserver = observer;
-        try {
-            fn();
-        } finally {
-            currentObserver = prevObserver;
-        }
-    };
+        return this.observables.get(key) as Observable<T>;
+    }
 
-    // Run once initially to establish dependencies
-    observer();
+    /**
+     * Clear all observables
+     */
+    clear(): void {
+        this.observables.clear();
+    }
 
-    // Return cleanup function
-    return () => {
-        // Remove this observer from all nodes
-        observableNodes.forEach((node) => {
-            node.observers.delete(observer);
-        });
-    };
-}
-
-/**
- * Batch multiple updates together to avoid excessive notifications
- * Similar to React's batch updates
- */
-export function batch(fn: () => void): void {
-    // Simple implementation: collect all changed nodes, then notify once
-    const changedNodes = new Set<ObservableNode>();
-    const originalNotify = notifyObservers;
-
-    // Temporarily replace notify to collect changes
-    const batchNotify = (node: ObservableNode) => {
-        changedNodes.add(node);
-    };
-
-    try {
-        // Run the function with batched notifications
-        Object.defineProperty(globalThis, 'notifyObservers', {
-            value: batchNotify,
-            writable: true,
-        });
-        fn();
-    } finally {
-        // Restore original notify
-        Object.defineProperty(globalThis, 'notifyObservers', {
-            value: originalNotify,
-            writable: true,
-        });
-
-        // Notify all changed nodes at once
-        changedNodes.forEach((node) => originalNotify(node));
+    /**
+     * Get all observable keys
+     */
+    getKeys(): OnyxKey[] {
+        return Array.from(this.observables.keys());
     }
 }
 
-/**
- * Get all observables (for debugging/inspection)
- */
-export function getAllObservables(): Map<OnyxKey, ObservableNode> {
-    return observableNodes;
-}
+// Create a singleton registry
+const registry = new ObservableRegistry();
 
-/**
- * Clear all observables (useful for testing)
- */
-export function clearAllObservables(): void {
-    observableNodes.clear();
-}
-
-/**
- * Compute a derived value that automatically updates
- * When dependencies change, the compute function re-runs
- */
-export function computed<T>(computeFn: () => T): Observable<T> {
-    let cachedValue: T;
-    let isDirty = true;
-    const observers = new Set<Observer>();
-
-    // Create a synthetic observable
-    const node: ObservableNode<T> = {
-        value: null as T,
-        observers,
-        version: 0,
-    };
-
-    // Observer that marks this computed as dirty when dependencies change
-    const markDirty: Observer = () => {
-        if (!isDirty) {
-            isDirty = true;
-            notifyObservers(node);
-        }
-    };
-
-    const compute = () => {
-        if (isDirty) {
-            const prevObserver = currentObserver;
-            currentObserver = markDirty;
-            try {
-                cachedValue = computeFn();
-                node.value = cachedValue;
-                isDirty = false;
-            } finally {
-                currentObserver = prevObserver;
-            }
-        }
-        return cachedValue;
-    };
-
-    return {
-        get(): T {
-            if (currentObserver) {
-                observers.add(currentObserver);
-            }
-            return compute();
-        },
-
-        set(): void {
-            throw new Error('Cannot set a computed observable');
-        },
-
-        observe(observer: Observer): () => void {
-            observers.add(observer);
-            return () => observers.delete(observer);
-        },
-
-        peek(): T {
-            return compute();
-        },
-    };
-}
+export {createObservable, ObservableRegistry, registry};

@@ -1,57 +1,77 @@
 /**
  * Observer-Based Onyx Types
- * Inspired by Legend-State's observable pattern
+ * Inspired by Legend-state: Components subscribe to observables, not raw keys
  */
 
-// Type for any Onyx key
-export type OnyxKey = string;
+type OnyxKey = string;
 
-// Type for any Onyx value
-export type OnyxValue = unknown;
+type OnyxValue = unknown;
 
-// Observable node - tracks dependencies and notifies observers
-export interface ObservableNode<T = OnyxValue> {
-    value: T | null;
-    observers: Set<Observer>;
-    version: number;
-}
+type Callback<T = OnyxValue> = (value: T | null, key?: OnyxKey) => void;
 
-// Observer - gets notified when observables change
-export type Observer = () => void;
+type Connection = {
+    id: string;
+};
 
-// Storage provider interface
-export interface StorageProvider {
+type InitOptions = {
+    keys?: Record<string, unknown>;
+    maxCachedKeysCount?: number;
+};
+
+type StorageProvider = {
     getItem(key: OnyxKey): Promise<OnyxValue | null>;
     setItem(key: OnyxKey, value: OnyxValue): Promise<void>;
     removeItem(key: OnyxKey): Promise<void>;
     getAllKeys(): Promise<OnyxKey[]>;
     clear(): Promise<void>;
-}
+};
 
-// Init options
-export interface InitOptions {
-    keys?: Record<string, unknown>;
-    maxCachedKeysCount?: number;
-}
-
-// Connection object for non-React usage
-export interface Connection {
-    id: string;
-}
-
-// Callback for non-React subscriptions
-export type Callback<T = OnyxValue> = (value: T | null, key?: OnyxKey) => void;
-
-// Connect options
-export interface ConnectOptions<T = OnyxValue> {
+type ConnectOptions<T = OnyxValue> = {
     key: OnyxKey;
     callback: Callback<T>;
+};
+
+/**
+ * Observer-specific types
+ */
+
+type Listener<T = OnyxValue> = (value: T | null) => void;
+
+/**
+ * Observable interface
+ * Wraps a value and provides methods to get, set, and subscribe
+ */
+interface Observable<T = OnyxValue> {
+    /**
+     * Get the current value
+     */
+    get(): T | null;
+
+    /**
+     * Set a new value
+     */
+    set(value: T | null): Promise<void>;
+
+    /**
+     * Merge changes with the existing value
+     */
+    merge(changes: Partial<T>): Promise<void>;
+
+    /**
+     * Subscribe to changes
+     * Returns an unsubscribe function
+     */
+    subscribe(listener: Listener<T>): () => void;
+
+    /**
+     * Get the key this observable is bound to
+     */
+    getKey(): OnyxKey;
+
+    /**
+     * Remove the value
+     */
+    remove(): Promise<void>;
 }
 
-// Observable wrapper type
-export interface Observable<T = OnyxValue> {
-    get(): T | null;
-    set(value: T | null): void;
-    observe(observer: Observer): () => void;
-    peek(): T | null; // Get value without tracking
-}
+export type {OnyxKey, OnyxValue, Callback, Connection, InitOptions, StorageProvider, ConnectOptions, Listener, Observable};

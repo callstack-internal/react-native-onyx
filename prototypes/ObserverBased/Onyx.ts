@@ -1,174 +1,169 @@
 /**
- * Observer-Based Onyx Implementation
- * Main API inspired by Legend-State's observable pattern
+ * Onyx API - Observer-Based Approach
+ *
+ * KEY DIFFERENCE: Returns observables instead of raw values
+ * - Onyx.observe(key) returns an Observable object
+ * - Components subscribe to observables, not keys
+ * - Fine-grained reactivity: only subscribers of a specific observable are notified
  */
 
-import Storage from './Storage';
-import {observable, batch, clearAllObservables} from './ObservableSystem';
-import type {OnyxKey, OnyxValue, InitOptions, ConnectOptions, Connection} from './types';
+import type {OnyxKey, OnyxValue, InitOptions, Observable, ConnectOptions, Connection} from './types';
+import {registry} from './ObservableSystem';
+import storage from './Storage';
 
-// Map to store all observables by key
-const observables = new Map<OnyxKey, ReturnType<typeof observable>>();
+/**
+ * Connection ID generator
+ */
+let nextConnectionId = 0;
+function generateConnectionId(): string {
+    return `connection_${nextConnectionId++}`;
+}
 
-// Connection tracking
-let connectionIdCounter = 0;
+/**
+ * Active connections for disconnect functionality
+ */
 const connections = new Map<string, () => void>();
 
 /**
- * Get or create an observable for a key
+ * Onyx API
  */
-function getObservable<T = OnyxValue>(key: OnyxKey): ReturnType<typeof observable<T>> {
-    if (!observables.has(key)) {
-        observables.set(key, observable<T>(key));
-    }
-    return observables.get(key) as ReturnType<typeof observable<T>>;
-}
-
-/**
- * Check if a key is a collection key (ends with '_')
- */
-function isCollectionKey(key: OnyxKey): boolean {
-    return key.endsWith('_');
-}
-
-/**
- * Check if a key belongs to a collection
- */
-function isCollectionMember(key: OnyxKey, collectionKey: OnyxKey): boolean {
-    return key.startsWith(collectionKey) && key !== collectionKey;
-}
-
 const Onyx = {
     /**
      * Initialize Onyx
      */
-    async init(options: InitOptions = {}): Promise<void> {
-        console.log('[Onyx ObserverBased] Initialized');
+    async init(options?: InitOptions): Promise<void> {
+        // Clear existing state
+        registry.clear();
 
-        // Load initial keys if provided
-        if (options.keys) {
+        // Initialize with initial keys if provided
+        if (options?.keys) {
             for (const [key, value] of Object.entries(options.keys)) {
-                await this.set(key, value);
+                const observable = registry.getObservable(key);
+                await observable.set(value);
             }
         }
     },
 
     /**
-     * Set a value in Onyx
-     * Updates the observable and persists to storage
+     * Get an observable for a key
+     * This is the main API - components get observables and subscribe to them
+     *
+     * @example
+     * const sessionObservable = Onyx.observe('session');
+     * const session = sessionObservable.get();
+     * sessionObservable.set({ userId: '123' });
      */
-    async set<T = OnyxValue>(key: OnyxKey, value: T): Promise<void> {
-        const obs = getObservable<T>(key);
-        obs.set(value);
-        await Storage.setItem(key, value);
+    observe<T = OnyxValue>(key: OnyxKey): Observable<T> {
+        return registry.getObservable<T>(key);
     },
 
     /**
-     * Get a value from Onyx
-     * First checks observable, then falls back to storage
+     * Get a value from storage (async)
+     * Loads from storage and updates the observable
      */
     async get<T = OnyxValue>(key: OnyxKey): Promise<T | null> {
-        const obs = getObservable<T>(key);
-        let value = obs.peek(); // Use peek to not track this access
+        const observable = registry.getObservable<T>(key);
 
-        // If not in observable, try loading from storage
-        if (value === null) {
-            value = (await Storage.getItem(key)) as T | null;
-            if (value !== null) {
-                obs.set(value);
-            }
+        // Check if observable already has a value
+        const currentValue = observable.get();
+        if (currentValue !== null) {
+            return currentValue;
+        }
+
+        // Load from storage
+        const value = (await storage.getItem(key)) as T | null;
+
+        // Update observable without triggering notifications
+        // (We don't notify because this is an initial load)
+        if (value !== null) {
+            await observable.set(value);
         }
 
         return value;
     },
 
     /**
-     * Merge changes into existing data
-     * For objects: shallow merge
-     * For arrays/primitives: replace
+     * Set a value
+     * Convenience method - delegates to the observable
+     */
+    async set<T = OnyxValue>(key: OnyxKey, value: T | null): Promise<void> {
+        const observable = registry.getObservable<T>(key);
+        await observable.set(value);
+    },
+
+    /**
+     * Merge changes with existing value
+     * Convenience method - delegates to the observable
      */
     async merge<T = OnyxValue>(key: OnyxKey, changes: Partial<T>): Promise<void> {
-        const existingValue = await this.get<T>(key);
-
-        let newValue: T;
-
-        if (existingValue && typeof existingValue === 'object' && !Array.isArray(existingValue)) {
-            // Shallow merge for objects
-            newValue = {...existingValue, ...changes} as T;
-        } else {
-            // Replace for arrays/primitives
-            newValue = changes as T;
-        }
-
-        await this.set(key, newValue);
+        const observable = registry.getObservable<T>(key);
+        await observable.merge(changes);
     },
 
     /**
-     * Merge multiple collection members at once
-     * More efficient than individual merge calls
+     * Merge collection
+     * Updates multiple keys that belong to a collection
      */
-    async mergeCollection(collectionKey: OnyxKey, collection: Record<string, OnyxValue>): Promise<void> {
-        // Use batch to group all updates together
-        batch(() => {
-            Object.entries(collection).forEach(([key, value]) => {
-                const obs = getObservable(key);
-                obs.set(value);
-            });
+    async mergeCollection(collection: Record<string, any>): Promise<void> {
+        const promises = Object.entries(collection).map(([key, value]) => {
+            const observable = registry.getObservable(key);
+            return observable.merge(value);
         });
 
-        // Persist all to storage
-        await Promise.all(Object.entries(collection).map(([key, value]) => Storage.setItem(key, value)));
+        await Promise.all(promises);
     },
 
     /**
-     * Remove a key from Onyx
+     * Remove a value
+     * Convenience method - delegates to the observable
      */
     async remove(key: OnyxKey): Promise<void> {
-        const obs = getObservable(key);
-        obs.set(null);
-        await Storage.removeItem(key);
+        const observable = registry.getObservable(key);
+        await observable.remove();
     },
 
     /**
      * Clear all data
      */
     async clear(): Promise<void> {
-        // Clear all observables
-        observables.forEach((obs) => obs.set(null));
-        observables.clear();
-        clearAllObservables();
+        await storage.clear();
 
-        // Clear storage
-        await Storage.clear();
+        // Clear all observables and notify subscribers
+        const keys = registry.getKeys();
+        for (const key of keys) {
+            const observable = registry.getObservable(key);
+            await observable.set(null);
+        }
 
-        console.log('[Onyx ObserverBased] Cleared all data');
+        registry.clear();
     },
 
     /**
-     * Connect to Onyx data (non-React)
-     * Returns a connection object that can be used to disconnect
+     * Connect to changes (non-React)
+     * This is for backwards compatibility with the key-based API
+     *
+     * @example
+     * const connection = Onyx.connect({
+     *   key: 'session',
+     *   callback: (value) => console.log('Session changed:', value)
+     * });
      */
     connect<T = OnyxValue>(options: ConnectOptions<T>): Connection {
         const {key, callback} = options;
-        const obs = getObservable<T>(key);
+        const observable = registry.getObservable<T>(key);
 
-        // Create observer that calls the callback
-        const observer = () => {
-            const value = obs.peek(); // Use peek to not create circular dependency
-            callback(value, key);
-        };
-
-        // Subscribe to observable
-        const unsubscribe = obs.observe(observer);
-
-        // Initial call with current value
-        this.get<T>(key).then((value) => {
+        // Subscribe to the observable
+        const unsubscribe = observable.subscribe((value) => {
             callback(value, key);
         });
 
         // Generate connection ID
-        const connectionId = `connection_${++connectionIdCounter}`;
+        const connectionId = generateConnectionId();
         connections.set(connectionId, unsubscribe);
+
+        // Call callback with initial value
+        const initialValue = observable.get();
+        callback(initialValue, key);
 
         return {id: connectionId};
     },
@@ -183,14 +178,7 @@ const Onyx = {
             connections.delete(connection.id);
         }
     },
-
-    /**
-     * Get the observable for a key (for advanced usage)
-     * This allows direct access to the observable API
-     */
-    getObservable<T = OnyxValue>(key: OnyxKey): ReturnType<typeof observable<T>> {
-        return getObservable<T>(key);
-    },
 };
 
 export default Onyx;
+export {registry};

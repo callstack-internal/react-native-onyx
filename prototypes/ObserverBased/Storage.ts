@@ -1,6 +1,7 @@
 /**
- * Simple in-memory storage provider
- * Can be swapped with IndexedDB, AsyncStorage, SQLite, etc.
+ * Storage Layer
+ * Simple in-memory storage for the prototype
+ * Can be replaced with IndexedDB, AsyncStorage, etc.
  */
 
 import type {OnyxKey, OnyxValue, StorageProvider} from './types';
@@ -9,30 +10,31 @@ import type {OnyxKey, OnyxValue, StorageProvider} from './types';
  * In-memory storage implementation
  */
 class MemoryStorage implements StorageProvider {
-    private storage = new Map<OnyxKey, OnyxValue>();
+    private store: Map<OnyxKey, OnyxValue> = new Map();
 
     async getItem(key: OnyxKey): Promise<OnyxValue | null> {
-        return this.storage.get(key) ?? null;
+        return this.store.get(key) ?? null;
     }
 
     async setItem(key: OnyxKey, value: OnyxValue): Promise<void> {
-        this.storage.set(key, value);
+        this.store.set(key, value);
     }
 
     async removeItem(key: OnyxKey): Promise<void> {
-        this.storage.delete(key);
+        this.store.delete(key);
     }
 
     async getAllKeys(): Promise<OnyxKey[]> {
-        return Array.from(this.storage.keys());
+        return Array.from(this.store.keys());
     }
 
     async clear(): Promise<void> {
-        this.storage.clear();
+        this.store.clear();
     }
 }
 
-// Singleton instance
+// Create a singleton instance
 const storage = new MemoryStorage();
 
 export default storage;
+export {MemoryStorage};
