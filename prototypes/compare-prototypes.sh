@@ -35,10 +35,10 @@ run_prototype_test() {
 
     if [ "$baseline" = true ]; then
         echo -e "${YELLOW}Running baseline tests...${NC}"
-        PROTOTYPE=$prototype npx reassure --testMatch="**/prototypes.perf-test.[jt]s" --baseline
+        PROTOTYPE=$prototype npx reassure --testMatch="**/prototypes.perf-test.[jt]sx" --baseline
     else
         echo -e "${YELLOW}Running current tests...${NC}"
-        PROTOTYPE=$prototype npx reassure --testMatch="**/prototypes.perf-test.[jt]s"
+        PROTOTYPE=$prototype npx reassure --testMatch="**/prototypes.perf-test.[jt]sx"
     fi
 
     # Copy the results to a prototype-specific file

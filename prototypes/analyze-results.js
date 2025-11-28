@@ -103,6 +103,7 @@ function generateReport(results) {
         'Basic Operations': ['set -', 'merge -', 'get -', 'clear -'],
         'Collection Operations': ['mergeCollection -'],
         'Subscription Performance': ['subscribe -', 'notify -'],
+        'useOnyx Hook Performance': ['useOnyx -'],
         'Mixed Workload': ['realistic workload'],
         'Memory and Cache': ['cache thrashing'],
         'Large Objects': ['large object'],

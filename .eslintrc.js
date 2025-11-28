@@ -85,6 +85,7 @@ module.exports = {
                 'max-classes-per-file': 'off',
                 'no-console': 'off',
                 'rulesdir/prefer-early-return': 'off',
+                'rulesdir/prefer-actions-set-data': 'off',
             },
         },
     ],
