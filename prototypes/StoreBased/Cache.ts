@@ -3,9 +3,6 @@
  *
  * Provides fast synchronous access to frequently used data.
  * Uses Least Recently Used (LRU) eviction policy.
- *
- * Note: In StoreBased approach, the OnyxStore itself acts as a cache.
- * This Cache is optional and can be used as a secondary cache for persistence layer.
  */
 
 import type {OnyxKey, OnyxValue} from './types';
@@ -85,13 +82,6 @@ function clear(): void {
 }
 
 /**
- * Get the current cache size
- */
-function getSize(): number {
-    return cache.size;
-}
-
-/**
  * Evict least recently used items if cache is over max size
  */
 function evictIfNeeded(): void {
@@ -142,7 +132,6 @@ const Cache = {
     delete: deleteKey,
     has,
     clear,
-    getSize,
     getAllKeys,
     getStats,
 };

@@ -52,14 +52,7 @@ class MemoryStorage implements StorageProvider {
 /**
  * The active storage provider
  */
-let provider: StorageProvider = new MemoryStorage();
-
-/**
- * Set a custom storage provider
- */
-function setProvider(newProvider: StorageProvider): void {
-    provider = newProvider;
-}
+const provider: StorageProvider = new MemoryStorage();
 
 /**
  * Get a value from storage
@@ -122,30 +115,6 @@ async function multiGet(keys: OnyxKey[]): Promise<Array<[OnyxKey, OnyxValue | nu
 }
 
 /**
- * Get all items from a collection
- * More efficient than individual gets for collections
- */
-async function getCollection<T = OnyxValue>(collectionKey: OnyxKey): Promise<Record<OnyxKey, T>> {
-    const allKeys = await getAllKeys();
-    const collectionKeys = allKeys.filter((key) => key.startsWith(collectionKey) && key !== collectionKey);
-
-    if (collectionKeys.length === 0) {
-        return {};
-    }
-
-    const items = await multiGet(collectionKeys);
-    const collection: Record<OnyxKey, T> = {};
-
-    items.forEach(([key, value]) => {
-        if (value !== null) {
-            collection[key] = value as T;
-        }
-    });
-
-    return collection;
-}
-
-/**
  * Set all items in a collection at once
  * More efficient than individual sets for collections
  */
@@ -156,7 +125,6 @@ async function setCollection(collection: Record<OnyxKey, OnyxValue>): Promise<vo
 
 // Export the Storage API
 const Storage = {
-    setProvider,
     getItem,
     setItem,
     removeItem,
@@ -164,7 +132,6 @@ const Storage = {
     clear,
     multiSet,
     multiGet,
-    getCollection,
     setCollection,
 };
 

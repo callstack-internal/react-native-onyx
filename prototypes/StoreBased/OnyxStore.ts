@@ -36,13 +36,6 @@ function getState(): StoreState {
 }
 
 /**
- * Get the current version
- */
-function getVersion(): number {
-    return version;
-}
-
-/**
  * Get a specific key from the store
  */
 function get<T = OnyxValue>(key: OnyxKey): T | null {
@@ -144,13 +137,6 @@ function notifyListeners(): void {
 }
 
 /**
- * Get the number of active listeners
- */
-function getListenerCount(): number {
-    return listeners.size;
-}
-
-/**
  * Get all keys in the store
  */
 function getAllKeys(): OnyxKey[] {
@@ -193,7 +179,6 @@ function getDebugInfo() {
 // Export the store API
 const OnyxStore = {
     getState,
-    getVersion,
     get,
     set,
     merge,
@@ -201,7 +186,6 @@ const OnyxStore = {
     remove,
     clear,
     subscribe,
-    getListenerCount,
     getAllKeys,
     has,
     getCollection,

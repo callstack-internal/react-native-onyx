@@ -40,13 +40,6 @@ function isCollectionKey(key: OnyxKey): boolean {
 }
 
 /**
- * Check if a key belongs to a collection
- */
-function isCollectionMemberKey(key: OnyxKey, collectionKey: OnyxKey): boolean {
-    return key.startsWith(collectionKey) && key !== collectionKey;
-}
-
-/**
  * Initialize Onyx
  */
 async function init(options: InitOptions = {}): Promise<void> {
@@ -138,7 +131,7 @@ async function mergeCollection<T = OnyxValue>(collectionKey: OnyxKey, collection
     OnyxStore.mergeCollection(collection);
 
     // Persist to storage asynchronously (batch operation)
-    const items = Object.entries(collection).map(([key, value]) => {
+    const items = Object.entries(collection).map(([key]) => {
         const currentValue = OnyxStore.get(key);
         return [key, currentValue] as [OnyxKey, OnyxValue];
     });
@@ -188,10 +181,12 @@ function connect<T = OnyxValue>(options: ConnectOptions<T>): Connection {
         if (isCollectionKey(key)) {
             // Collection key - get all matching keys
             const collection = OnyxStore.getCollection(key);
+            // @ts-expect-error expected
             callback(collection as T, key);
         } else {
             // Regular key
             const value = OnyxStore.get<T>(key);
+            // @ts-expect-error expected
             callback(value, key);
         }
     };
@@ -202,6 +197,7 @@ function connect<T = OnyxValue>(options: ConnectOptions<T>): Connection {
     // Store connection info
     connections.set(connectionId, {
         key,
+        // @ts-expect-error expected
         callback,
         unsubscribe,
     });

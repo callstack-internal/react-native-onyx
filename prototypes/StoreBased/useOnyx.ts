@@ -13,7 +13,7 @@
 
 import {useSyncExternalStore, useMemo} from 'react';
 import OnyxStore from './OnyxStore';
-import type {OnyxKey, OnyxValue, StoreState} from './types';
+import type {OnyxKey, OnyxValue} from './types';
 
 /**
  * Hook options
@@ -64,10 +64,7 @@ function isCollectionKey(key: OnyxKey): boolean {
  *   selector: (session) => session?.email
  * });
  */
-function useOnyx<TValue = OnyxValue, TReturnValue = TValue>(
-    key: OnyxKey,
-    options?: UseOnyxOptions<TValue, TReturnValue>,
-): [TReturnValue | null, UseOnyxMetadata] {
+function useOnyx<TValue = OnyxValue, TReturnValue = TValue>(key: OnyxKey, options?: UseOnyxOptions<TValue, TReturnValue>): [TReturnValue | null, UseOnyxMetadata] {
     const {selector, initWithStoredValues = true} = options ?? {};
 
     /**
