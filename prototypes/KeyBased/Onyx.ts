@@ -10,8 +10,19 @@ import type {OnyxKey, OnyxValue, Connection, ConnectOptions, InitOptions, Callba
 
 /**
  * Map to track subscribers for each key
+ * Structure: Map<OnyxKey, Map<subscriptionID, Callback>>
  */
-const subscribers = new Map<OnyxKey, Set<Callback>>();
+const subscribers = new Map<OnyxKey, Map<number, Callback>>();
+
+/**
+ * Reverse mapping from subscription ID to key for quick unsubscription
+ */
+const subscriptionIDToKey = new Map<number, OnyxKey>();
+
+/**
+ * Counter for generating unique subscription IDs
+ */
+let lastSubscriptionID = 0;
 
 /**
  * Check if a key is a collection key (ends with '_')
@@ -47,25 +58,41 @@ function notifySubscribers(key: OnyxKey, value: OnyxValue | null): void {
 
 /**
  * Subscribe to a key
+ * Returns a subscription ID that can be used to unsubscribe
  */
-function subscribeToKey(key: OnyxKey, callback: Callback): void {
+function subscribeToKey(key: OnyxKey, callback: Callback): number {
+    const subscriptionID = lastSubscriptionID++;
+
     if (!subscribers.has(key)) {
-        subscribers.set(key, new Set());
+        subscribers.set(key, new Map());
     }
-    subscribers.get(key)!.add(callback);
+    subscribers.get(key)!.set(subscriptionID, callback);
+
+    // Store reverse mapping for quick unsubscription
+    subscriptionIDToKey.set(subscriptionID, key);
+
+    return subscriptionID;
 }
 
 /**
- * Unsubscribe from a key
+ * Unsubscribe using a subscription ID
  */
-function unsubscribeFromKey(key: OnyxKey, callback: Callback): void {
+function unsubscribeFromKey(subscriptionID: number): void {
+    const key = subscriptionIDToKey.get(subscriptionID);
+    if (!key) {
+        return;
+    }
+
     const keySubscribers = subscribers.get(key);
     if (keySubscribers) {
-        keySubscribers.delete(callback);
+        keySubscribers.delete(subscriptionID);
         if (keySubscribers.size === 0) {
             subscribers.delete(key);
         }
     }
+
+    // Clean up reverse mapping
+    subscriptionIDToKey.delete(subscriptionID);
 }
 
 /**
@@ -81,7 +108,12 @@ async function init(options: InitOptions = {}): Promise<void> {
 
     // Wire up ConnectionManager to use our subscription system
     ConnectionManager.setSubscriptionHandler((key, callback) => {
-        subscribeToKey(key, callback);
+        return subscribeToKey(key, callback);
+    });
+
+    // Wire up unsubscription handler
+    ConnectionManager.setUnsubscriptionHandler((subscriptionID) => {
+        unsubscribeFromKey(subscriptionID);
     });
 
     console.log('[Onyx] Initialized');
@@ -197,6 +229,7 @@ function connect<T = OnyxValue>(options: ConnectOptions<T>): Connection {
     // Initialize with current value
     get(options.key).then((value) => {
         if (ConnectionManager.getConnectionCount() > 0) {
+            // @ts-expect-error expected
             options.callback(value as T, options.key);
         }
     });

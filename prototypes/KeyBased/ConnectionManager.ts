@@ -11,6 +11,9 @@ type ConnectCallback = Callback | CollectionCallback;
  * Represents the connection's metadata
  */
 interface ConnectionMetadata {
+    /** The subscription ID returned by the subscription handler */
+    subscriptionID: number;
+
     /** The Onyx key associated to this connection */
     onyxKey: OnyxKey;
 
@@ -59,7 +62,10 @@ class ConnectionManager {
     private sessionID: string;
 
     /** External subscription handler (will be set by Onyx) */
-    private subscriptionHandler?: (key: OnyxKey, callback: Callback) => void;
+    private subscriptionHandler?: (key: OnyxKey, callback: Callback) => number;
+
+    /** External unsubscription handler (will be set by Onyx) */
+    private unsubscriptionHandler?: (subscriptionID: number) => void;
 
     constructor() {
         this.connectionsMap = new Map();
@@ -70,8 +76,15 @@ class ConnectionManager {
     /**
      * Set the subscription handler (called by Onyx to wire up subscriptions)
      */
-    setSubscriptionHandler(handler: (key: OnyxKey, callback: Callback) => void): void {
+    setSubscriptionHandler(handler: (key: OnyxKey, callback: Callback) => number): void {
         this.subscriptionHandler = handler;
+    }
+
+    /**
+     * Set the unsubscription handler (called by Onyx to wire up unsubscriptions)
+     */
+    setUnsubscriptionHandler(handler: (subscriptionID: number) => void): void {
+        this.unsubscriptionHandler = handler;
     }
 
     /**
@@ -133,12 +146,14 @@ class ConnectionManager {
                 }
             };
 
-            // Register with subscription handler if available
+            // Register with subscription handler and get subscription ID
+            let subscriptionID = 0;
             if (this.subscriptionHandler) {
-                this.subscriptionHandler(connectOptions.key, internalCallback);
+                subscriptionID = this.subscriptionHandler(connectOptions.key, internalCallback);
             }
 
             connectionMetadata = {
+                subscriptionID,
                 onyxKey: connectOptions.key,
                 isConnectionMade: false,
                 callbacks: new Map(),
@@ -179,8 +194,13 @@ class ConnectionManager {
         // Remove the callback
         connectionMetadata.callbacks.delete(connection.callbackID);
 
-        // If no more callbacks, remove the connection entirely
+        // If no more callbacks, unsubscribe and remove the connection entirely
         if (connectionMetadata.callbacks.size === 0) {
+            // Call unsubscription handler to clean up the subscription
+            if (this.unsubscriptionHandler) {
+                this.unsubscriptionHandler(connectionMetadata.subscriptionID);
+            }
+
             this.connectionsMap.delete(connection.id);
         }
     }
@@ -204,19 +224,6 @@ class ConnectionManager {
      */
     getConnectionCount(): number {
         return this.connectionsMap.size;
-    }
-
-    /**
-     * Notify a specific connection of value changes (used internally by Onyx)
-     */
-    notifyConnection(connectionID: string, value: OnyxValue | null, key: OnyxKey): void {
-        const connection = this.connectionsMap.get(connectionID);
-        if (connection) {
-            connection.cachedCallbackValue = value;
-            connection.cachedCallbackKey = key;
-            connection.isConnectionMade = true;
-            this.fireCallbacks(connectionID);
-        }
     }
 }
 

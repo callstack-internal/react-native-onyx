@@ -2,7 +2,6 @@
  * Simplified Storage Layer
  * Uses in-memory storage for simplicity (can be replaced with IndexedDB, AsyncStorage, etc.)
  */
-
 import type {OnyxKey, OnyxValue, StorageProvider} from './types';
 
 /**

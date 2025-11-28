@@ -103,7 +103,7 @@ function useOnyx<TValue = OnyxValue, TReturnValue = TValue>(key: OnyxKey, option
             if (!connectionRef.current) {
                 connectionRef.current = Onyx.connect<TValue>({
                     key,
-                    callback: (value) => {
+                    callback: () => {
                         // Update loading state
                         loadingRef.current = false;
 

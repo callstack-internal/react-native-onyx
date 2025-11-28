@@ -10,7 +10,9 @@ import type {OnyxKey, OnyxValue} from './types';
  */
 class Cache {
     private cache: Map<OnyxKey, OnyxValue>;
+
     private maxSize: number;
+
     private accessOrder: Set<OnyxKey>;
 
     constructor() {
@@ -112,22 +114,6 @@ class Cache {
                 this.accessOrder.delete(keyToEvict);
             }
         }
-    }
-
-    /**
-     * Get collection members from cache
-     * Returns all keys that start with the collection key prefix
-     */
-    getCollectionMembers(collectionKey: OnyxKey): Record<OnyxKey, OnyxValue> {
-        const collection: Record<OnyxKey, OnyxValue> = {};
-
-        for (const [key, value] of this.cache.entries()) {
-            if (key.startsWith(collectionKey)) {
-                collection[key] = value;
-            }
-        }
-
-        return collection;
     }
 }
 

@@ -7,7 +7,7 @@ This is a simplified prototype implementation of Onyx, focusing on the core key-
 ### Core Components
 
 1. **Storage** (`Storage.ts`)
-   - Persistent storage layer using in-memory storage (easily swappable with IndexedDB, AsyncStorage, etc.)
+   - Persistent storage layer using in-memory storage (easily swappable with IndexedDB, etc.)
    - Provides async methods: `getItem()`, `setItem()`, `removeItem()`, `getAllKeys()`, `clear()`
 
 2. **Cache** (`Cache.ts`)
@@ -351,17 +351,9 @@ prototypes/KeyBased/
 └── README.md            # This file
 ```
 
-## Next Steps
-
-To use this prototype:
-
-1. Customize the Storage provider for your platform (web/native)
-2. Add any missing features you need
-3. Test performance with your data patterns
-
 ## Notes
 
 - This is a prototype for understanding Onyx architecture
 - For production use, refer to the full Onyx implementation
 - The Storage layer uses in-memory storage by default (data doesn't persist across page reloads)
-- To add real persistence, replace the MemoryStorage with IndexedDB, AsyncStorage, or SQLite
+- To add real persistence, replace the MemoryStorage with IndexedDB or SQLite

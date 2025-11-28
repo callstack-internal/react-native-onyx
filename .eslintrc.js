@@ -78,5 +78,14 @@ module.exports = {
                 'no-restricted-syntax': ['error', 'ForInStatement', 'LabeledStatement', 'WithStatement'],
             },
         },
+        {
+            files: ['prototypes/**/*.{js,jsx,ts,tsx}'],
+            rules: {
+                '@lwc/lwc/no-async-await': 'off',
+                'max-classes-per-file': 'off',
+                'no-console': 'off',
+                'rulesdir/prefer-early-return': 'off',
+            },
+        },
     ],
 };
