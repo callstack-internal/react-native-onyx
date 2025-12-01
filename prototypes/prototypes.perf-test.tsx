@@ -652,4 +652,216 @@ describe(`Prototype Comparison - ${prototypeName}`, () => {
             });
         });
     });
+
+    describe('Collection Subscription Performance', () => {
+        // Component that subscribes to entire collection
+        function CollectionSubscriberComponent() {
+            const [collection] = useOnyx('report_');
+            const count = collection && typeof collection === 'object' ? Object.keys(collection).length : 0;
+            return (
+                <View>
+                    <Text>Collection size: {count}</Text>
+                </View>
+            );
+        }
+
+        // Component that subscribes to collection with selector
+        function CollectionWithSelectorComponent() {
+            const [openReports] = useOnyx('report_', {
+                selector: (collection: any) => {
+                    if (!collection || typeof collection !== 'object') return [];
+                    return Object.values(collection).filter((report: any) => report?.status === 'open');
+                },
+            });
+            const count = Array.isArray(openReports) ? openReports.length : 0;
+            return (
+                <View>
+                    <Text>Open reports: {count}</Text>
+                </View>
+            );
+        }
+
+        test('useOnyx - subscribe to whole collection (100 items)', async () => {
+            await measureRenders(<CollectionSubscriberComponent />, {
+                beforeEach: async () => {
+                    // Pre-populate collection with 100 reports
+                    const collection = generateReportsCollection(100);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+            });
+        });
+
+        test('useOnyx - subscribe to whole collection (500 items)', async () => {
+            await measureRenders(<CollectionSubscriberComponent />, {
+                beforeEach: async () => {
+                    // Pre-populate collection with 500 reports
+                    const collection = generateReportsCollection(500);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+            });
+        });
+
+        test('useOnyx - subscribe to whole collection (1000 items)', async () => {
+            await measureRenders(<CollectionSubscriberComponent />, {
+                beforeEach: async () => {
+                    // Pre-populate collection with 1000 reports
+                    const collection = generateReportsCollection(1000);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+            });
+        });
+
+        test('useOnyx - collection updates with subscriber (update 10 of 100 items)', async () => {
+            await measureRenders(<CollectionSubscriberComponent />, {
+                beforeEach: async () => {
+                    const collection = generateReportsCollection(100);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+                scenario: async () => {
+                    // Update 10 items in the collection
+                    for (let i = 0; i < 10; i++) {
+                        await act(async () => {
+                            await Onyx.merge(`report_${i}`, {
+                                status: 'updated',
+                                updatedAt: Date.now(),
+                            });
+                        });
+                    }
+                },
+            });
+        });
+
+        test('useOnyx - collection updates with subscriber (update 50 of 500 items)', async () => {
+            await measureRenders(<CollectionSubscriberComponent />, {
+                beforeEach: async () => {
+                    const collection = generateReportsCollection(500);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+                scenario: async () => {
+                    // Update 50 items in the collection
+                    for (let i = 0; i < 50; i++) {
+                        await act(async () => {
+                            await Onyx.merge(`report_${i}`, {
+                                status: 'updated',
+                                updatedAt: Date.now(),
+                            });
+                        });
+                    }
+                },
+            });
+        });
+
+        test('useOnyx - add items to subscribed collection (add 20 to 100)', async () => {
+            await measureRenders(<CollectionSubscriberComponent />, {
+                beforeEach: async () => {
+                    const collection = generateReportsCollection(100);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+                scenario: async () => {
+                    // Add 20 new items to the collection
+                    for (let i = 100; i < 120; i++) {
+                        await act(async () => {
+                            await Onyx.set(`report_${i}`, generateReport(i));
+                        });
+                    }
+                },
+            });
+        });
+
+        test('useOnyx - bulk collection merge with subscriber (merge 100 items)', async () => {
+            await measureRenders(<CollectionSubscriberComponent />, {
+                beforeEach: async () => {
+                    const collection = generateReportsCollection(100);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+                scenario: async () => {
+                    // Bulk merge 100 updated items
+                    await act(async () => {
+                        const updates: Record<string, any> = {};
+                        for (let i = 0; i < 100; i++) {
+                            updates[`report_${i}`] = {status: 'bulk_updated', updatedAt: Date.now()};
+                        }
+                        await Onyx.mergeCollection('report_', updates);
+                    });
+                },
+            });
+        });
+
+        test.skip('useOnyx - collection with selector (filter 100 items)', async () => {
+            await measureRenders(<CollectionWithSelectorComponent />, {
+                beforeEach: async () => {
+                    const collection = generateReportsCollection(100);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+            });
+        });
+
+        test.skip('useOnyx - collection with selector updates (filter changes)', async () => {
+            await measureRenders(<CollectionWithSelectorComponent />, {
+                beforeEach: async () => {
+                    const collection = generateReportsCollection(100);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+                scenario: async () => {
+                    // Change status of 20 items (some to open, some to closed)
+                    for (let i = 0; i < 20; i++) {
+                        await act(async () => {
+                            await Onyx.merge(`report_${i}`, {
+                                status: i % 2 === 0 ? 'open' : 'closed',
+                                updatedAt: Date.now(),
+                            });
+                        });
+                    }
+                },
+            });
+        });
+
+        test('useOnyx - multiple components subscribed to same collection', async () => {
+            function MultipleCollectionSubscribers() {
+                const [collection1] = useOnyx('report_');
+                const [collection2] = useOnyx('report_');
+                const [collection3] = useOnyx('report_');
+
+                const count1 = collection1 && typeof collection1 === 'object' ? Object.keys(collection1).length : 0;
+                const count2 = collection2 && typeof collection2 === 'object' ? Object.keys(collection2).length : 0;
+                const count3 = collection3 && typeof collection3 === 'object' ? Object.keys(collection3).length : 0;
+
+                return (
+                    <View>
+                        <Text>Subscriber 1: {count1}</Text>
+                        <Text>Subscriber 2: {count2}</Text>
+                        <Text>Subscriber 3: {count3}</Text>
+                    </View>
+                );
+            }
+
+            await measureRenders(<MultipleCollectionSubscribers />, {
+                beforeEach: async () => {
+                    const collection = generateReportsCollection(200);
+                    await Onyx.mergeCollection('report_', collection);
+                },
+                afterEach: cleanup,
+                scenario: async () => {
+                    // Update 20 items
+                    for (let i = 0; i < 20; i++) {
+                        await act(async () => {
+                            await Onyx.merge(`report_${i}`, {
+                                status: 'updated',
+                                updatedAt: Date.now(),
+                            });
+                        });
+                    }
+                },
+            });
+        });
+    });
 });
