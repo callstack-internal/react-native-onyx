@@ -29,6 +29,12 @@ const listeners = new Set<StoreListener>();
 let version = 0;
 
 /**
+ * Cache for collection objects
+ * Maps collection key to its cached object
+ */
+const collectionCache = new Map<OnyxKey, Record<OnyxKey, any>>();
+
+/**
  * Get the current store state
  */
 function getState(): StoreState {
@@ -48,6 +54,10 @@ function get<T = OnyxValue>(key: OnyxKey): T | null {
 function set(key: OnyxKey, value: OnyxValue): void {
     state[key] = value;
     version++;
+
+    // Invalidate collection caches that include this key
+    invalidateCollectionCaches(key);
+
     notifyListeners();
 }
 
@@ -73,6 +83,10 @@ function merge<T = OnyxValue>(key: OnyxKey, changes: Partial<T> | T): void {
 
     state[key] = newValue;
     version++;
+
+    // Invalidate collection caches that include this key
+    invalidateCollectionCaches(key);
+
     notifyListeners();
 }
 
@@ -91,6 +105,9 @@ function mergeCollection(collection: Record<OnyxKey, OnyxValue>): void {
             // Array or primitive: replace
             state[key] = value;
         }
+
+        // Invalidate collection caches that include this key
+        invalidateCollectionCaches(key);
     });
 
     // Only increment version and notify once after all updates
@@ -104,6 +121,10 @@ function mergeCollection(collection: Record<OnyxKey, OnyxValue>): void {
 function remove(key: OnyxKey): void {
     delete state[key];
     version++;
+
+    // Invalidate collection caches that include this key
+    invalidateCollectionCaches(key);
+
     notifyListeners();
 }
 
@@ -113,6 +134,10 @@ function remove(key: OnyxKey): void {
 function clear(): void {
     state = {};
     version++;
+
+    // Clear collection cache
+    collectionCache.clear();
+
     notifyListeners();
 }
 
@@ -151,18 +176,49 @@ function has(key: OnyxKey): boolean {
 }
 
 /**
- * Get collection members (keys that start with collectionKey)
+ * Invalidate collection caches when a key changes
  */
-function getCollection<T = OnyxValue>(collectionKey: OnyxKey): Record<OnyxKey, T> {
+function invalidateCollectionCaches(key: OnyxKey): void {
+    // Find all collection keys that this key belongs to
+    collectionCache.forEach((_, collectionKey) => {
+        if (key.startsWith(collectionKey)) {
+            collectionCache.delete(collectionKey);
+        }
+    });
+}
+
+/**
+ * Get collection members (keys that start with collectionKey)
+ * Returns a cached object when the collection hasn't changed
+ * Returns null if the collection is empty
+ */
+function getCollection<T = OnyxValue>(collectionKey: OnyxKey): Record<OnyxKey, T> | null {
+    // Check if we have a cached collection
+    if (collectionCache.has(collectionKey)) {
+        return collectionCache.get(collectionKey) as Record<OnyxKey, T> | null;
+    }
+
+    // Build new collection object (excluding null values)
     const collection: Record<OnyxKey, T> = {};
 
     Object.keys(state).forEach((key) => {
         if (key.startsWith(collectionKey) && key !== collectionKey) {
-            collection[key] = state[key] as T;
+            const value = state[key];
+            // Exclude null values from collections
+            if (value !== null) {
+                collection[key] = value as T;
+            }
         }
     });
 
-    return collection;
+    // Return null if collection is empty
+    const hasMembers = Object.keys(collection).length > 0;
+    const result = hasMembers ? collection : null;
+
+    // Cache the collection object
+    collectionCache.set(collectionKey, result);
+
+    return result;
 }
 
 /**
