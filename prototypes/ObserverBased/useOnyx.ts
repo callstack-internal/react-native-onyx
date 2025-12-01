@@ -86,13 +86,12 @@ function useOnyx<TValue = OnyxValue, TReturnValue = TValue>(key: OnyxKey, option
 
     /**
      * Subscribe function for useSyncExternalStore
-     * Subscribes to the specific observable for this key
+     * Subscribes to the observable (which may be a CollectionObservable)
      */
     const subscribeToObservable = useCallback(
         (onStoreChange: () => void) => {
-            // Subscribe to this specific observable
-            // This is the key difference from other prototypes:
-            // We subscribe to a single observable, not all state changes
+            // Subscribe to the observable
+            // CollectionObservable automatically handles subscriptions to all members
             return observable.subscribe(() => {
                 onStoreChange();
             });

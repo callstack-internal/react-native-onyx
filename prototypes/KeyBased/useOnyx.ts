@@ -129,13 +129,26 @@ function useOnyx<TValue = OnyxValue, TReturnValue = TValue>(key: OnyxKey, option
 
     /**
      * Get snapshot function for useSyncExternalStore
+     * Collection aggregation is now handled by the Onyx layer, so we just read from cache
      */
     const getSnapshot = useCallback((): TReturnValue | null => {
-        // Get value from cache
-        const value = Cache.get(key) as TValue | null;
+        // Check if this is a collection key (ends with '_')
+        const isCollectionKey = key.endsWith('_');
+
+        let value: TValue | null;
+        if (isCollectionKey) {
+            // For collection keys, get the aggregated collection from cache
+            value = Cache.getCollection(key) as TValue | null;
+        } else {
+            // For non-collection keys, get the value directly (preserves null vs undefined)
+            value = Cache.get(key) as TValue | null;
+        }
+
+        // Convert undefined to null for consistency, but preserve explicit null values
+        const normalizedValue = value === undefined ? null : value;
 
         // Apply selector if provided
-        return cachedSelector(value);
+        return cachedSelector(normalizedValue as TValue | null);
     }, [key, cachedSelector]);
 
     /**

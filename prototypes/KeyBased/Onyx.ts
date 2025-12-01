@@ -49,9 +49,12 @@ function notifySubscribers(key: OnyxKey, value: OnyxValue | null): void {
     }
 
     // Notify collection subscribers if this key is part of a collection
+    // Similar to OnyxUtils.keysChanged() in actual Onyx
     subscribers.forEach((callbacks, subscribedKey) => {
         if (isCollectionKey(subscribedKey) && isCollectionMemberKey(key, subscribedKey)) {
-            callbacks.forEach((callback) => callback(value, key));
+            // Get the aggregated collection and send it to collection subscribers
+            const collection = Cache.getCollection(subscribedKey);
+            callbacks.forEach((callback) => callback(collection, subscribedKey));
         }
     });
 }
@@ -237,7 +240,11 @@ function connect<T = OnyxValue>(options: ConnectOptions<T>): Connection {
     const connection = ConnectionManager.connect(options);
 
     // Initialize with current value
-    get(options.key).then((value) => {
+    const initPromise = isCollectionKey(options.key)
+        ? Promise.resolve(Cache.getCollection(options.key) as T | null)
+        : get(options.key);
+
+    initPromise.then((value) => {
         if (ConnectionManager.getConnectionCount() > 0) {
             // @ts-expect-error expected
             options.callback(value as T, options.key);

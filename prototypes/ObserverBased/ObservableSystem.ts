@@ -8,8 +8,16 @@
  * 4. Observable API: .get(), .set(), .subscribe()
  */
 
+import {deepEqual} from 'fast-equals';
 import type {OnyxKey, OnyxValue, Listener, Observable} from './types';
 import storage from './Storage';
+
+/**
+ * Check if a key is a collection key (ends with '_')
+ */
+function isCollectionKey(key: OnyxKey): boolean {
+    return key.endsWith('_');
+}
 
 /**
  * Create an Observable that wraps a value
@@ -142,6 +150,187 @@ function createObservable<T = OnyxValue>(key: OnyxKey, initialValue: T | null = 
 }
 
 /**
+ * Create a Collection Observable that aggregates multiple observables
+ * This watches all observables that start with the collection key prefix
+ */
+function createCollectionObservable<T = OnyxValue>(collectionKey: OnyxKey, registry: ObservableRegistry): Observable<Record<string, T>> {
+    // Cache for the aggregated collection value
+    let cachedCollection: Record<string, T> | null = null;
+    let cachedCollectionData: unknown = null;
+
+    // Set of listeners subscribed to this collection
+    const listeners = new Set<Listener<Record<string, T>>>();
+
+    // Map of subscriptions to individual observables
+    const memberSubscriptions = new Map<OnyxKey, () => void>();
+
+    /**
+     * Notify all listeners when any member changes
+     */
+    function notifyListeners(): void {
+        const collection = getCurrentCollection();
+        listeners.forEach((listener) => {
+            listener(collection);
+        });
+    }
+
+    /**
+     * Get the current aggregated collection value
+     */
+    function getCurrentCollection(): Record<string, T> {
+        const collection: Record<string, T> = {};
+        const allKeys = registry.getKeys();
+
+        allKeys.forEach((observableKey) => {
+            if (observableKey.startsWith(collectionKey) && observableKey !== collectionKey) {
+                const obs = registry.getObservable(observableKey);
+                const value = obs.get();
+                if (value !== null) {
+                    collection[observableKey] = value as T;
+                }
+            }
+        });
+
+        // Check if collection has actually changed using deep equality
+        if (deepEqual(collection, cachedCollectionData)) {
+            // Data hasn't changed, return the same reference
+            return cachedCollection!;
+        }
+
+        // Data changed, update cache
+        cachedCollectionData = collection;
+        cachedCollection = collection;
+
+        return collection;
+    }
+
+    /**
+     * Subscribe to an observable that belongs to this collection
+     */
+    function subscribeToMember(memberKey: OnyxKey): void {
+        if (memberSubscriptions.has(memberKey)) {
+            return; // Already subscribed
+        }
+
+        const obs = registry.getObservable(memberKey);
+        const unsubscribe = obs.subscribe(() => {
+            // When a member changes, notify collection listeners
+            notifyListeners();
+        });
+
+        memberSubscriptions.set(memberKey, unsubscribe);
+    }
+
+    /**
+     * Called when a new member is added to the registry
+     * Subscribes to it if we have active listeners
+     */
+    function onMemberAdded(memberKey: OnyxKey): void {
+        // Only subscribe if we have active listeners
+        if (listeners.size > 0) {
+            subscribeToMember(memberKey);
+            // Notify listeners about the new member
+            notifyListeners();
+        }
+    }
+
+    /**
+     * Subscribe to all existing members
+     */
+    function subscribeToAllMembers(): void {
+        const allKeys = registry.getKeys();
+        allKeys.forEach((key) => {
+            if (key.startsWith(collectionKey) && key !== collectionKey) {
+                subscribeToMember(key);
+            }
+        });
+    }
+
+    const collectionObservable: Observable<Record<string, T>> & {onMemberAdded: (key: OnyxKey) => void} = {
+        /**
+         * Get the current aggregated collection value
+         */
+        get(): Record<string, T> | null {
+            return getCurrentCollection();
+        },
+
+        /**
+         * Set not supported for collections
+         */
+        async set(_value: Record<string, T> | null): Promise<void> {
+            // To keep simplified implementation
+            throw new Error('Cannot set a collection directly. Use merge or set individual members.');
+        },
+
+        /**
+         * Merge changes into the collection
+         * Updates individual member observables
+         */
+        async merge(changes: Partial<Record<string, T>>): Promise<void> {
+            const promises = Object.entries(changes).map(([key, value]) => {
+                const obs = registry.getObservable(key);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                return obs.merge(value as any);
+            });
+
+            await Promise.all(promises);
+        },
+
+        /**
+         * Subscribe to collection changes
+         * Automatically subscribes to all member observables
+         */
+        subscribe(listener: Listener<Record<string, T>>): () => void {
+            listeners.add(listener);
+
+            // Subscribe to all existing members when first listener subscribes
+            if (listeners.size === 1) {
+                subscribeToAllMembers();
+            }
+
+            return () => {
+                listeners.delete(listener);
+
+                // If no more listeners, unsubscribe from all members
+                if (listeners.size === 0) {
+                    memberSubscriptions.forEach((unsubscribe) => unsubscribe());
+                    memberSubscriptions.clear();
+                }
+            };
+        },
+
+        /**
+         * Get the collection key
+         */
+        getKey(): OnyxKey {
+            return collectionKey;
+        },
+
+        /**
+         * Remove all members of the collection
+         */
+        async remove(): Promise<void> {
+            const allKeys = registry.getKeys();
+            const promises = allKeys
+                .filter((key) => key.startsWith(collectionKey) && key !== collectionKey)
+                .map((key) => {
+                    const obs = registry.getObservable(key);
+                    return obs.remove();
+                });
+
+            await Promise.all(promises);
+        },
+
+        /**
+         * Notify that a new member was added
+         */
+        onMemberAdded,
+    };
+
+    return collectionObservable;
+}
+
+/**
  * Observable registry
  * Maps keys to their observables
  */
@@ -150,13 +339,43 @@ class ObservableRegistry {
 
     /**
      * Get or create an observable for a key
+     * For collection keys (ending with '_'), returns a CollectionObservable
+     * For regular keys, returns a standard Observable
      */
     getObservable<T = OnyxValue>(key: OnyxKey): Observable<T> {
-        if (!this.observables.has(key)) {
-            this.observables.set(key, createObservable<T>(key));
+        const isNew = !this.observables.has(key);
+
+        if (isNew) {
+            if (isCollectionKey(key)) {
+                // Create a collection observable
+                this.observables.set(key, createCollectionObservable<T>(key, this));
+            } else {
+                // Create a standard observable
+                this.observables.set(key, createObservable<T>(key));
+
+                // Notify any collection observables that this member was added
+                this.notifyCollectionObservables(key);
+            }
         }
 
         return this.observables.get(key) as Observable<T>;
+    }
+
+    /**
+     * Notify collection observables when a new member is added
+     */
+    private notifyCollectionObservables(memberKey: OnyxKey): void {
+        // Find all collection keys that this member belongs to
+        this.observables.forEach((observable, collectionKey) => {
+            // Check if this is a collection observable and the member belongs to it
+            if (isCollectionKey(collectionKey) && memberKey.startsWith(collectionKey) && memberKey !== collectionKey) {
+                // Type assertion to access onMemberAdded
+                const collectionObs = observable as Observable & {onMemberAdded?: (key: OnyxKey) => void};
+                if (collectionObs.onMemberAdded) {
+                    collectionObs.onMemberAdded(memberKey);
+                }
+            }
+        });
     }
 
     /**
