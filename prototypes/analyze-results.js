@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const PROTOTYPES = ['KeyBased', 'StoreBased', 'ProxyBased', 'ObserverBased'];
+const PROTOTYPES = ['KeyBased', 'StoreBased', 'ObserverBased']; // ProxyBased temporarily excluded
 const COMPARISON_DIR = path.join(__dirname, '..', '.reassure', 'comparisons');
 const OUTPUT_FILE = path.join(__dirname, 'PERFORMANCE_COMPARISON.md');
 
@@ -84,9 +84,10 @@ function generateReport(results) {
     let report = '# Onyx Prototypes Performance Comparison\n\n';
     report += `*Generated: ${new Date().toISOString()}*\n\n`;
     report += '## Overview\n\n';
-    report += 'This report compares the performance of 4 Onyx prototype implementations:\n\n';
+    report += 'This report compares the performance of 3 Onyx prototype implementations:\n\n';
     report +=
-        '- **KeyBased**: Per-key subscriptions with individual storage\n- **StoreBased**: Global store with collection-based storage\n- **ProxyBased**: Proxy-based reactive system\n- **ObserverBased**: Observer pattern implementation\n\n';
+        '- **KeyBased**: Per-key subscriptions with individual storage\n- **StoreBased**: Global store with collection-based storage\n- **ObserverBased**: Observer pattern implementation\n\n';
+    report += '*Note: ProxyBased prototype is temporarily excluded from this comparison.*\n\n';
 
     // Get all unique test names
     const allTestNames = new Set();
@@ -116,8 +117,8 @@ function generateReport(results) {
         if (categoryTests.length === 0) return;
 
         report += `## ${category}\n\n`;
-        report += '| Test | KeyBased | StoreBased | ProxyBased | ObserverBased | Winner |\n';
-        report += '|------|----------|------------|------------|---------------|--------|\n';
+        report += '| Test | KeyBased | StoreBased | ObserverBased | Winner |\n';
+        report += '|------|----------|------------|---------------|--------|\n';
 
         categoryTests.forEach((testName) => {
             const durations = {};
@@ -175,7 +176,7 @@ function generateReport(results) {
     // Summary section
     report += '## Summary\n\n';
 
-    const wins = {KeyBased: 0, StoreBased: 0, ProxyBased: 0, ObserverBased: 0};
+    const wins = {KeyBased: 0, StoreBased: 0, ObserverBased: 0};
 
     Array.from(allTestNames).forEach((testName) => {
         const durations = {};
