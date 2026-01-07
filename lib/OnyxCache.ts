@@ -55,6 +55,12 @@ class OnyxCache {
     /** Set of collection keys for fast lookup */
     private collectionKeys = new Set<OnyxKey>();
 
+    /** Track which collections have changed since last getCollectionData() call */
+    private dirtyCollections: Set<OnyxKey>;
+
+    /** The stable reference returned last time for each collection */
+    private stableCollectionReference: Record<OnyxKey, Record<OnyxKey, OnyxValue<OnyxKey>>>;
+
     constructor() {
         this.storageKeys = new Set();
         this.nullishStorageKeys = new Set();
@@ -62,6 +68,8 @@ class OnyxCache {
         this.storageMap = {};
         this.collectionData = {};
         this.pendingPromises = new Map();
+        this.dirtyCollections = new Set();
+        this.stableCollectionReference = {};
 
         // bind all public methods to prevent problems with `this`
         bindAll(
@@ -174,6 +182,7 @@ class OnyxCache {
             // Remove from collection data cache if it's a collection member
             if (collectionKey && this.collectionData[collectionKey]) {
                 delete this.collectionData[collectionKey][key];
+                this.dirtyCollections.add(collectionKey);
             }
             return undefined;
         }
@@ -186,6 +195,7 @@ class OnyxCache {
                 this.collectionData[collectionKey] = {};
             }
             this.collectionData[collectionKey][key] = value;
+            this.dirtyCollections.add(collectionKey);
         }
 
         return value;
@@ -199,11 +209,13 @@ class OnyxCache {
         const collectionKey = this.getCollectionKey(key);
         if (collectionKey && this.collectionData[collectionKey]) {
             delete this.collectionData[collectionKey][key];
+            this.dirtyCollections.add(collectionKey);
         }
 
         // If this is a collection key, clear its data
         if (this.isCollectionKey(key)) {
             delete this.collectionData[key];
+            this.dirtyCollections.add(key);
         }
 
         this.storageKeys.delete(key);
@@ -238,6 +250,7 @@ class OnyxCache {
                 // Remove from collection data cache if it's a collection member
                 if (collectionKey && this.collectionData[collectionKey]) {
                     delete this.collectionData[collectionKey][key];
+                    this.dirtyCollections.add(collectionKey);
                 }
             } else {
                 this.nullishStorageKeys.delete(key);
@@ -248,6 +261,7 @@ class OnyxCache {
                         this.collectionData[collectionKey] = {};
                     }
                     this.collectionData[collectionKey][key] = this.storageMap[key];
+                    this.dirtyCollections.add(collectionKey);
                 }
             }
         });
@@ -323,6 +337,7 @@ class OnyxCache {
             const collectionKey = this.getCollectionKey(key);
             if (collectionKey && this.collectionData[collectionKey]) {
                 delete this.collectionData[collectionKey][key];
+                this.dirtyCollections.add(collectionKey);
             }
             this.recentKeys.delete(key);
         }
@@ -468,11 +483,23 @@ class OnyxCache {
     getCollectionData(collectionKey: OnyxKey): Record<OnyxKey, OnyxValue<OnyxKey>> | undefined {
         const cachedCollection = this.collectionData[collectionKey];
         if (!cachedCollection || Object.keys(cachedCollection).length === 0) {
+            // Clean up tracking for empty collections
+            this.dirtyCollections.delete(collectionKey);
+            delete this.stableCollectionReference[collectionKey];
             return undefined;
         }
 
-        // Return a shallow copy to ensure React detects changes when items are added/removed
-        return {...cachedCollection};
+        // Return stable reference if collection hasn't been modified
+        if (!this.dirtyCollections.has(collectionKey) && this.stableCollectionReference[collectionKey]) {
+            return this.stableCollectionReference[collectionKey];
+        }
+
+        // Collection changed, create new reference
+        const newReference = {...cachedCollection};
+        this.stableCollectionReference[collectionKey] = newReference;
+        this.dirtyCollections.delete(collectionKey);
+
+        return newReference;
     }
 }
 
