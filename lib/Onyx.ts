@@ -30,6 +30,12 @@ import * as GlobalSettings from './GlobalSettings';
 import decorateWithMetrics from './metrics';
 import OnyxMerge from './OnyxMerge';
 
+let isOnyxInitialized = false;
+
+function isInitialized(): boolean {
+    return isOnyxInitialized;
+}
+
 /** Initialize the store with actions and listening for storage events */
 function init({
     keys = {},
@@ -72,9 +78,11 @@ function init({
     OnyxUtils.initStoreValues(keys, initialKeyStates, evictableKeys);
 
     // Initialize all of our keys with data provided then give green light to any pending connections
-    Promise.all([cache.addEvictableKeysToRecentlyAccessedList(OnyxUtils.isCollectionKey, OnyxUtils.getAllKeys), OnyxUtils.initializeWithDefaultKeyStates()]).then(
-        OnyxUtils.getDeferredInitTask().resolve,
-    );
+    Promise.all([cache.addEvictableKeysToRecentlyAccessedList(OnyxUtils.isCollectionKey, OnyxUtils.getAllKeys), OnyxUtils.initializeWithDefaultKeyStates()])
+        .then(OnyxUtils.getDeferredInitTask().resolve)
+        .then(() => {
+            isOnyxInitialized = true;
+        });
 }
 
 /**
@@ -100,6 +108,10 @@ function init({
  * @returns The connection object to use when calling `Onyx.disconnect()`.
  */
 function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Connection {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     return connectionManager.connect(connectOptions);
 }
 
@@ -125,6 +137,10 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
  * @returns The connection object to use when calling `Onyx.disconnect()`.
  */
 function connectWithoutView<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Connection {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     return connectionManager.connect(connectOptions);
 }
 
@@ -144,6 +160,10 @@ function connectWithoutView<TKey extends OnyxKey>(connectOptions: ConnectOptions
  * @param connection Connection object returned by calling `Onyx.connect()` or `Onyx.connectWithoutView()`.
  */
 function disconnect(connection: Connection): void {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     connectionManager.disconnect(connection);
 }
 
@@ -155,6 +175,10 @@ function disconnect(connection: Connection): void {
  * @param options optional configuration object
  */
 function set<TKey extends OnyxKey>(key: TKey, value: OnyxSetInput<TKey>, options?: SetOptions): Promise<void> {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     return OnyxUtils.setWithRetry({key, value, options});
 }
 
@@ -166,6 +190,10 @@ function set<TKey extends OnyxKey>(key: TKey, value: OnyxSetInput<TKey>, options
  * @param data object keyed by ONYXKEYS and the values to set
  */
 function multiSet(data: OnyxMultiSetInput): Promise<void> {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     return OnyxUtils.multiSetWithRetry(data);
 }
 
@@ -186,6 +214,10 @@ function multiSet(data: OnyxMultiSetInput): Promise<void> {
  * Onyx.merge(ONYXKEYS.POLICY, {name: 'My Workspace'}); // -> {id: 1, name: 'My Workspace'}
  */
 function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): Promise<void> {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     const skippableCollectionMemberIDs = OnyxUtils.getSkippableCollectionMemberIDs();
     if (skippableCollectionMemberIDs.size) {
         try {
@@ -275,6 +307,10 @@ function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): 
  * @param collection Object collection keyed by individual collection member keys and values
  */
 function mergeCollection<TKey extends CollectionKeyBase>(collectionKey: TKey, collection: OnyxMergeCollectionInput<TKey>): Promise<void> {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     return OnyxUtils.mergeCollectionWithPatches({collectionKey, collection, isProcessingCollectionUpdate: true});
 }
 
@@ -300,6 +336,10 @@ function mergeCollection<TKey extends CollectionKeyBase>(collectionKey: TKey, co
  * @param keysToPreserve is a list of ONYXKEYS that should not be cleared with the rest of the data
  */
 function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     const defaultKeyStates = OnyxUtils.getDefaultKeyStates();
     const initialKeys = Object.keys(defaultKeyStates);
 
@@ -408,6 +448,10 @@ function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
  * @returns resolves when all operations are complete
  */
 function update<TKey extends OnyxKey>(data: Array<OnyxUpdate<TKey>>): Promise<void> {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     // First, validate the Onyx object is in the format we expect
     for (const {onyxMethod, key, value} of data) {
         if (!Object.values(OnyxUtils.METHOD).includes(onyxMethod)) {
@@ -564,6 +608,10 @@ function update<TKey extends OnyxKey>(data: Array<OnyxUpdate<TKey>>): Promise<vo
  * @param collection Object collection keyed by individual collection member keys and values
  */
 function setCollection<TKey extends CollectionKeyBase>(collectionKey: TKey, collection: OnyxSetCollectionInput<TKey>): Promise<void> {
+    if (!isInitialized()) {
+        Logger.logAlert('Onyx method called before Onyx.init(). Please make sure Onyx.init() is called before connecting to any keys.');
+    }
+
     return OnyxUtils.setCollectionWithRetry({collectionKey, collection});
 }
 
@@ -581,6 +629,7 @@ const Onyx = {
     clear,
     init,
     registerLogger: Logger.registerLogger,
+    isInitialized,
 };
 
 function applyDecorators() {
