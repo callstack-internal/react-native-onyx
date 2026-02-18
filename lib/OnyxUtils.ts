@@ -1257,14 +1257,22 @@ function unsubscribeFromKey(subscriptionID: number): void {
 }
 
 function updateSnapshots<TKey extends OnyxKey>(data: Array<OnyxUpdate<TKey>>, mergeFn: typeof Onyx.merge): Array<() => Promise<void>> {
+    const t0 = performance.now();
+
     const snapshotCollectionKey = getSnapshotKey();
-    if (!snapshotCollectionKey) return [];
+    if (!snapshotCollectionKey) {
+        // eslint-disable-next-line no-console
+        console.log(`[updateSnapshots] no snapshot key, early exit (${(performance.now() - t0).toFixed(3)}ms)`);
+        return [];
+    }
 
     const promises: Array<() => Promise<void>> = [];
 
     const snapshotCollection = getCachedCollection(snapshotCollectionKey);
+    const snapshotEntries = Object.entries(snapshotCollection);
+    let matchedUpdates = 0;
 
-    for (const [snapshotEntryKey, snapshotEntryValue] of Object.entries(snapshotCollection)) {
+    for (const [snapshotEntryKey, snapshotEntryValue] of snapshotEntries) {
         // Snapshots may not be present in cache. We don't know how to update them so we skip.
         if (!snapshotEntryValue) {
             continue;
@@ -1286,6 +1294,8 @@ function updateSnapshots<TKey extends OnyxKey>(data: Array<OnyxUpdate<TKey>>, me
             if (!snapshotData || !snapshotData[key]) {
                 continue;
             }
+
+            matchedUpdates++;
 
             if (Array.isArray(value) || Array.isArray(snapshotData[key])) {
                 updatedData[key] = value || [];
@@ -1318,6 +1328,12 @@ function updateSnapshots<TKey extends OnyxKey>(data: Array<OnyxUpdate<TKey>>, me
 
         promises.push(() => mergeFn(snapshotEntryKey, {data: updatedData}));
     }
+
+    const duration = performance.now() - t0;
+    // eslint-disable-next-line no-console
+    console.log(
+        `[updateSnapshots] ${duration.toFixed(3)}ms | updates: ${data.length}, snapshots: ${snapshotEntries.length}, matched: ${matchedUpdates}, merges queued: ${promises.length}`,
+    );
 
     return promises;
 }
