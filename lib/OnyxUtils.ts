@@ -92,6 +92,9 @@ let defaultKeyStates: Record<OnyxKey, OnyxValue<OnyxKey>> = {};
 // Used for comparison with a new update to avoid invoking the Onyx.connect callback with the same data.
 let lastConnectionCallbackData = new Map<number, OnyxValue<OnyxKey>>();
 
+// Global store listeners that get notified on any key change (used by useStore)
+const globalStoreListeners = new Set<() => void>();
+
 let snapshotKey: OnyxKey | null = null;
 
 // Keeps track of the last subscriptionID that was used so we can keep incrementing it
@@ -743,6 +746,11 @@ function keysChanged<TKey extends CollectionKeyBase>(
             continue;
         }
     }
+
+    // Notify global store listeners (used by useStore)
+    for (const listener of globalStoreListeners) {
+        listener();
+    }
 }
 
 /**
@@ -820,6 +828,11 @@ function keyChanged<TKey extends OnyxKey>(
         }
 
         console.error('Warning: Found a matching subscriber to a key that changed, but no callback could be found.');
+    }
+
+    // Notify global store listeners (used by useStore)
+    for (const listener of globalStoreListeners) {
+        listener();
     }
 }
 
@@ -1824,6 +1837,12 @@ const OnyxUtils = {
     updateSnapshots,
     mergeCollectionWithPatches,
     partialSetCollection,
+    subscribeToGlobalStore: (listener: () => void) => {
+        globalStoreListeners.add(listener);
+        return () => {
+            globalStoreListeners.delete(listener);
+        };
+    },
     logKeyChanged,
     logKeyRemoved,
     setWithRetry,

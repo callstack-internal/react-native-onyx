@@ -71,6 +71,7 @@ class OnyxCache {
             this,
             'getAllKeys',
             'get',
+            'getStorageMap',
             'hasCacheForKey',
             'addKey',
             'addNullishStorageKey',
@@ -142,6 +143,11 @@ class OnyxCache {
     /** Used to clear keys that are null/undefined in cache */
     clearNullishStorageKeys(): void {
         this.nullishStorageKeys = new Set();
+    }
+
+    /** Get the entire storage map (used by useStore for snapshot access) */
+    getStorageMap(): Record<OnyxKey, OnyxValue<OnyxKey>> {
+        return this.storageMap;
     }
 
     /** Check whether cache has data for the given key */

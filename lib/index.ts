@@ -21,10 +21,11 @@ import type {
 import type {FetchStatus, ResultMetadata, UseOnyxResult, UseOnyxOptions} from './useOnyx';
 import type {Connection} from './OnyxConnectionManager';
 import useOnyx from './useOnyx';
+import useStore from './useStore';
 import type {OnyxSQLiteKeyValuePair} from './storage/providers/SQLiteProvider';
 
 export default Onyx;
-export {useOnyx};
+export {useOnyx, useStore};
 export type {
     ConnectOptions,
     CustomTypeOptions,
