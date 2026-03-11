@@ -12,7 +12,7 @@ const selectorCache = new WeakMap<(state: OnyxState) => unknown, {value: unknown
 
 function useStore<TResult>(selector: (state: OnyxState) => TResult): TResult {
     const getSnapshot = (): TResult => {
-        const state = OnyxCache.getStorageMap();
+        const state = OnyxCache.getStoreSnapshot();
         const nextResult = selector(state);
 
         const cached = selectorCache.get(selector) as {value: TResult} | undefined;

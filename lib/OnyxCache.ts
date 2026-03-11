@@ -31,6 +31,9 @@ class OnyxCache {
     /** A map of cached values */
     private storageMap: Record<OnyxKey, OnyxValue<OnyxKey>>;
 
+    /** Immutable snapshot of storageMap for useSyncExternalStore consumers */
+    private storeSnapshot: Record<OnyxKey, OnyxValue<OnyxKey>>;
+
     /** Cache of complete collection data objects for O(1) retrieval */
     private collectionData: Record<OnyxKey, Record<OnyxKey, OnyxValue<OnyxKey>>>;
 
@@ -63,6 +66,7 @@ class OnyxCache {
         this.nullishStorageKeys = new Set();
         this.recentKeys = new Set();
         this.storageMap = {};
+        this.storeSnapshot = {};
         this.collectionData = {};
         this.pendingPromises = new Map();
 
@@ -71,7 +75,7 @@ class OnyxCache {
             this,
             'getAllKeys',
             'get',
-            'getStorageMap',
+            'getStoreSnapshot',
             'hasCacheForKey',
             'addKey',
             'addNullishStorageKey',
@@ -145,9 +149,14 @@ class OnyxCache {
         this.nullishStorageKeys = new Set();
     }
 
-    /** Get the entire storage map (used by useStore for snapshot access) */
-    getStorageMap(): Record<OnyxKey, OnyxValue<OnyxKey>> {
-        return this.storageMap;
+    /** Returns an immutable snapshot of the storage map for useSyncExternalStore consumers. */
+    getStoreSnapshot(): Record<OnyxKey, OnyxValue<OnyxKey>> {
+        return this.storeSnapshot;
+    }
+
+    /** Creates a new snapshot reference from the current storageMap. */
+    private bumpSnapshot(): void {
+        this.storeSnapshot = {...this.storageMap};
     }
 
     /** Check whether cache has data for the given key */
@@ -186,6 +195,7 @@ class OnyxCache {
             if (collectionKey && this.collectionData[collectionKey]) {
                 delete this.collectionData[collectionKey][key];
             }
+            this.bumpSnapshot();
             return undefined;
         }
 
@@ -199,6 +209,7 @@ class OnyxCache {
             this.collectionData[collectionKey][key] = value;
         }
 
+        this.bumpSnapshot();
         return value;
     }
 
@@ -219,6 +230,7 @@ class OnyxCache {
 
         this.storageKeys.delete(key);
         this.recentKeys.delete(key);
+        this.bumpSnapshot();
     }
 
     /**
@@ -262,6 +274,8 @@ class OnyxCache {
                 }
             }
         }
+
+        this.bumpSnapshot();
     }
 
     /**
@@ -336,6 +350,10 @@ class OnyxCache {
                 delete this.collectionData[collectionKey][key];
             }
             this.recentKeys.delete(key);
+        }
+
+        if (keysToRemove.length > 0) {
+            this.bumpSnapshot();
         }
     }
 
