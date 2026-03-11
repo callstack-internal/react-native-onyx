@@ -34,6 +34,9 @@ class OnyxCache {
     /** Immutable snapshot of storageMap for useSyncExternalStore consumers */
     private storeSnapshot: Record<OnyxKey, OnyxValue<OnyxKey>>;
 
+    /** Immutable snapshot of collectionData for useSyncExternalStore consumers */
+    private collectionSnapshot: Record<OnyxKey, Record<OnyxKey, OnyxValue<OnyxKey>>>;
+
     /** Cache of complete collection data objects for O(1) retrieval */
     private collectionData: Record<OnyxKey, Record<OnyxKey, OnyxValue<OnyxKey>>>;
 
@@ -67,6 +70,7 @@ class OnyxCache {
         this.recentKeys = new Set();
         this.storageMap = {};
         this.storeSnapshot = {};
+        this.collectionSnapshot = {};
         this.collectionData = {};
         this.pendingPromises = new Map();
 
@@ -76,6 +80,7 @@ class OnyxCache {
             'getAllKeys',
             'get',
             'getStoreSnapshot',
+            'getCollectionSnapshot',
             'hasCacheForKey',
             'addKey',
             'addNullishStorageKey',
@@ -154,9 +159,20 @@ class OnyxCache {
         return this.storeSnapshot;
     }
 
-    /** Creates a new snapshot reference from the current storageMap. */
+    /** Returns an immutable snapshot of collection data for useSyncExternalStore consumers. */
+    getCollectionSnapshot(): Record<OnyxKey, Record<OnyxKey, OnyxValue<OnyxKey>>> {
+        return this.collectionSnapshot;
+    }
+
+    /** Creates new snapshot references from the current storageMap and collectionData. */
     private bumpSnapshot(): void {
         this.storeSnapshot = {...this.storageMap};
+
+        const nextCollectionSnapshot: Record<OnyxKey, Record<OnyxKey, OnyxValue<OnyxKey>>> = {};
+        for (const key of Object.keys(this.collectionData)) {
+            nextCollectionSnapshot[key] = {...this.collectionData[key]};
+        }
+        this.collectionSnapshot = nextCollectionSnapshot;
     }
 
     /** Check whether cache has data for the given key */

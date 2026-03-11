@@ -2,7 +2,7 @@ import {act, renderHook} from '@testing-library/react-native';
 import Onyx, {useStore} from '../../lib';
 import waitForPromisesToResolve from '../utils/waitForPromisesToResolve';
 import type GenericCollection from '../utils/GenericCollection';
-import type {OnyxState} from '../../lib/useStore';
+import type {OnyxState, OnyxCollections} from '../../lib/useStore';
 
 const ONYXKEYS = {
     TEST_KEY: 'test',
@@ -25,6 +25,8 @@ Onyx.init({
  */
 const selectTestKey = (state: OnyxState) => state[ONYXKEYS.TEST_KEY] as TestEntry | undefined;
 const selectTestKey2 = (state: OnyxState) => state[ONYXKEYS.TEST_KEY_2] as {id: string} | undefined;
+const selectTestCollection = (_state: OnyxState, collections: OnyxCollections) =>
+    collections[ONYXKEYS.COLLECTION.TEST_KEY] as Record<string, TestEntry | undefined> | undefined;
 
 beforeEach(async () => {
     await Onyx.clear();
@@ -150,25 +152,14 @@ describe('useStore', () => {
     });
 
     describe('collections', () => {
-        it('should return all entries from a collection', async () => {
+        it('should return all entries from a collection via collections param', async () => {
             await Onyx.mergeCollection(ONYXKEYS.COLLECTION.TEST_KEY, {
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}1`]: {id: '1'},
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}2`]: {id: '2'},
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}3`]: {id: '3'},
             } as GenericCollection);
 
-            const {result} = renderHook(() =>
-                useStore((state) => {
-                    const prefix = ONYXKEYS.COLLECTION.TEST_KEY;
-                    const entries: Record<string, unknown> = {};
-                    for (const key of Object.keys(state)) {
-                        if (key.startsWith(prefix) && key.length > prefix.length) {
-                            entries[key] = state[key];
-                        }
-                    }
-                    return entries;
-                }),
-            );
+            const {result} = renderHook(() => useStore((_state, collections) => collections[ONYXKEYS.COLLECTION.TEST_KEY]));
 
             await act(async () => waitForPromisesToResolve());
 
@@ -179,15 +170,15 @@ describe('useStore', () => {
             });
         });
 
-        it('should update when a collection member changes', async () => {
+        it('should update collection when a member changes', async () => {
             await Onyx.mergeCollection(ONYXKEYS.COLLECTION.TEST_KEY, {
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}1`]: {id: '1', name: 'first'},
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}2`]: {id: '2', name: 'second'},
             } as GenericCollection);
 
-            const selectMember = (state: OnyxState) => state[`${ONYXKEYS.COLLECTION.TEST_KEY}1`] as TestEntry | undefined;
-
-            const {result} = renderHook(() => useStore((state) => selectMember(state)?.name));
+            const {result} = renderHook(() =>
+                useStore((state, collections) => selectTestCollection(state, collections)?.[`${ONYXKEYS.COLLECTION.TEST_KEY}1`]?.name),
+            );
 
             await act(async () => waitForPromisesToResolve());
 
@@ -197,6 +188,14 @@ describe('useStore', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current).toEqual('updated');
+        });
+
+        it('should return empty object for collection with no members', async () => {
+            const {result} = renderHook(() => useStore((_state, collections) => collections[ONYXKEYS.COLLECTION.TEST_KEY]));
+
+            await act(async () => waitForPromisesToResolve());
+
+            expect(result.current).toEqual({});
         });
     });
 
