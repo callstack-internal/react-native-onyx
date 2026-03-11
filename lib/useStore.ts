@@ -2,9 +2,11 @@ import {deepEqual} from 'fast-equals';
 import {useRef, useSyncExternalStore} from 'react';
 import OnyxCache from './OnyxCache';
 import OnyxUtils from './OnyxUtils';
-import type {OnyxKey, OnyxValue} from './types';
+import type {KeyValueMapping} from './types';
 
-type OnyxState = Record<OnyxKey, OnyxValue<OnyxKey>>;
+type OnyxState = {
+    [TKey in keyof KeyValueMapping]?: KeyValueMapping[TKey];
+};
 
 function useStore<TResult>(selector: (state: OnyxState) => TResult): TResult {
     const cachedRef = useRef<{value: TResult} | undefined>(undefined);
@@ -25,3 +27,4 @@ function useStore<TResult>(selector: (state: OnyxState) => TResult): TResult {
 }
 
 export default useStore;
+export type {OnyxState};

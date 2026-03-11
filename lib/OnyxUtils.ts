@@ -783,9 +783,6 @@ function keyChanged<TKey extends OnyxKey>(
     if (collectionKey) {
         // Getting the collection key from the specific key because only collection keys were stored in the mapping.
         stateMappingKeys = [...stateMappingKeys, ...(onyxKeyToSubscriptionIDs.get(collectionKey) ?? [])];
-        if (stateMappingKeys.length === 0) {
-            return;
-        }
     }
 
     const cachedCollections: Record<string, ReturnType<typeof getCachedCollection>> = {};
