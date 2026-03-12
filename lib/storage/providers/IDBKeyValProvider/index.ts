@@ -2,6 +2,7 @@ import type {UseStore} from 'idb-keyval';
 import * as IDB from 'idb-keyval';
 import utils from '../../../utils';
 import type StorageProvider from '../types';
+import type {StorageKeyValuePair} from '../types';
 import type {OnyxKey, OnyxValue} from '../../../types';
 import createStore from './createStore';
 
@@ -108,6 +109,13 @@ const provider: StorageProvider<UseStore | undefined> = {
         }
 
         return IDB.keys(provider.store);
+    },
+    getAll() {
+        if (!provider.store) {
+            throw new Error('Store not initialized!');
+        }
+
+        return IDB.entries(provider.store) as Promise<StorageKeyValuePair[]>;
     },
     getItem(key) {
         if (!provider.store) {

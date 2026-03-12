@@ -1111,17 +1111,40 @@ function mergeInternal<TValue extends OnyxInput<OnyxKey> | undefined, TChange ex
  * Merge user provided default key value pairs.
  */
 function initializeWithDefaultKeyStates(): Promise<void> {
-    // Filter out RAM-only keys from storage reads as they may have stale persisted data
-    // from before the key was migrated to RAM-only.
-    const keysToFetch = Object.keys(defaultKeyStates).filter((key) => !isRamOnlyKey(key));
-    return Storage.multiGet(keysToFetch).then((pairs) => {
-        const existingDataAsObject = Object.fromEntries(pairs) as Record<string, unknown>;
+    // Eagerly load the entire database into cache in a single batch read.
+    // This is faster than lazy-loading individual keys because:
+    // 1. One DB transaction instead of hundreds
+    // 2. All subsequent reads are synchronous cache hits
+    return Storage.getAll().then((pairs) => {
+        const allDataFromStorage: Record<string, unknown> = {};
 
-        const merged = utils.fastMerge(existingDataAsObject, defaultKeyStates, {
+        for (const [key, value] of pairs) {
+            // RAM-only keys should never be loaded from storage as they may have stale persisted data
+            // from before the key was migrated to RAM-only.
+            if (isRamOnlyKey(key)) {
+                continue;
+            }
+            allDataFromStorage[key] = value;
+        }
+
+        // Load all storage data into cache silently (no subscriber notifications)
+        cache.merge(allDataFromStorage);
+
+        // Extract only the default key states from storage and merge with defaults
+        const defaultKeysFromStorage = Object.keys(defaultKeyStates).reduce((obj: Record<string, unknown>, key) => {
+            if (key in allDataFromStorage) {
+                obj[key] = allDataFromStorage[key];
+            }
+            return obj;
+        }, {});
+
+        const merged = utils.fastMerge(defaultKeysFromStorage, defaultKeyStates, {
             shouldRemoveNestedNulls: true,
         }).result;
         cache.merge(merged ?? {});
 
+        // Only notify subscribers for default key states — same as before.
+        // Other keys will be picked up by subscribers when they connect.
         for (const [key, value] of Object.entries(merged ?? {})) keyChanged(key, value);
     });
 }
