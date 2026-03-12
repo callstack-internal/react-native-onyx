@@ -100,6 +100,38 @@ let lastSubscriptionID = 0;
 // Connections can be made before `Onyx.init`. They would wait for this task before resolving
 const deferredInitTask = createDeferredTask();
 
+// Global key event listeners for useOnyx — simple key → callbacks map.
+// Bypasses the connection manager entirely for synchronous cache reads.
+const globalKeyListeners = new Map<OnyxKey, Set<() => void>>();
+
+/**
+ * Subscribe to key change events. Returns an unsubscribe function.
+ * Used by useOnyx to get notified when a key's value changes in cache.
+ */
+function subscribeToKeyEvents(key: OnyxKey, callback: () => void): () => void {
+    let listeners = globalKeyListeners.get(key);
+    if (!listeners) {
+        listeners = new Set();
+        globalKeyListeners.set(key, listeners);
+    }
+    listeners.add(callback);
+
+    return () => {
+        listeners!.delete(callback);
+        if (listeners!.size === 0) {
+            globalKeyListeners.delete(key);
+        }
+    };
+}
+
+/**
+ * Notify all global listeners for a specific key.
+ * Does NOT cascade to parent collection keys — call separately if needed.
+ */
+function notifyKeyListeners(key: OnyxKey): void {
+    globalKeyListeners.get(key)?.forEach((fn) => fn());
+}
+
 // Holds a set of collection member IDs which updates will be ignored when using Onyx methods.
 let skippableCollectionMemberIDs = new Set<string>();
 // Holds a set of keys that should always be merged into snapshot entries.
@@ -743,6 +775,14 @@ function keysChanged<TKey extends CollectionKeyBase>(
             continue;
         }
     }
+
+    // Notify global key event listeners (useOnyx)
+    notifyKeyListeners(collectionKey);
+    if (partialCollection) {
+        for (const memberKey of Object.keys(partialCollection)) {
+            notifyKeyListeners(memberKey);
+        }
+    }
 }
 
 /**
@@ -764,17 +804,19 @@ function keyChanged<TKey extends OnyxKey>(
         cache.removeLastAccessedKey(key);
     }
 
-    // We get the subscribers interested in the key that has just changed. If the subscriber's  key is a collection key then we will
-    // notify them if the key that changed is a collection member. Or if it is a regular key notify them when there is an exact match.
-    // Given the amount of times this function is called we need to make sure we are not iterating over all subscribers every time. On the other hand, we don't need to
-    // do the same in keysChanged, because we only call that function when a collection key changes, and it doesn't happen that often.
-    // For performance reason, we look for the given key and later if don't find it we look for the collection key, instead of checking if it is a collection key first.
-    let stateMappingKeys = onyxKeyToSubscriptionIDs.get(key) ?? [];
-    const collectionKey = getCollectionKey(key);
+    // Notify global key event listeners (useOnyx) — must fire before the early return below
+    // so that useOnyx subscribers always get notified even when there are no legacy Onyx.connect() subscribers.
+    notifyKeyListeners(key);
+    const parentCollectionKey = getCollectionKey(key);
+    if (parentCollectionKey) {
+        notifyKeyListeners(parentCollectionKey);
+    }
 
-    if (collectionKey) {
+    let stateMappingKeys = onyxKeyToSubscriptionIDs.get(key) ?? [];
+
+    if (parentCollectionKey) {
         // Getting the collection key from the specific key because only collection keys were stored in the mapping.
-        stateMappingKeys = [...stateMappingKeys, ...(onyxKeyToSubscriptionIDs.get(collectionKey) ?? [])];
+        stateMappingKeys = [...stateMappingKeys, ...(onyxKeyToSubscriptionIDs.get(parentCollectionKey) ?? [])];
         if (stateMappingKeys.length === 0) {
             return;
         }
@@ -1853,6 +1895,7 @@ const OnyxUtils = {
     multiSetWithRetry,
     setCollectionWithRetry,
     isRamOnlyKey,
+    subscribeToKeyEvents,
 };
 
 GlobalSettings.addGlobalSettingsChangeListener(({enablePerformanceMetrics}) => {

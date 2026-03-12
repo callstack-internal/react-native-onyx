@@ -99,6 +99,8 @@ class OnyxCache {
             'getCollectionData',
             'setRamOnlyKeys',
             'isRamOnlyKey',
+            'addEvictionBlock',
+            'removeEvictionBlock',
         );
     }
 
@@ -492,6 +494,28 @@ class OnyxCache {
      */
     isRamOnlyKey(key: OnyxKey): boolean {
         return this.ramOnlyKeys.has(key);
+    }
+
+    /**
+     * Add an eviction block for a key. Keys with active blocks cannot be evicted.
+     */
+    addEvictionBlock(key: OnyxKey, blockId: string): void {
+        if (!this.evictionBlocklist[key]) {
+            this.evictionBlocklist[key] = [];
+        }
+        if (!this.evictionBlocklist[key]!.includes(blockId)) {
+            this.evictionBlocklist[key]!.push(blockId);
+        }
+    }
+
+    /**
+     * Remove an eviction block for a key.
+     */
+    removeEvictionBlock(key: OnyxKey, blockId: string): void {
+        this.evictionBlocklist[key] = this.evictionBlocklist[key]?.filter((id) => id !== blockId) ?? [];
+        if (this.evictionBlocklist[key]?.length === 0) {
+            delete this.evictionBlocklist[key];
+        }
     }
 }
 
