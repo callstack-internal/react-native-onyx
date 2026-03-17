@@ -4,7 +4,6 @@ import {Text, View} from 'react-native';
 import {measureRenders} from 'reassure';
 import type {FetchStatus, OnyxEntry, OnyxKey, OnyxValue, ResultMetadata, UseOnyxOptions} from '../../lib';
 import Onyx, {useOnyx} from '../../lib';
-import StorageMock from '../../lib/storage';
 import type {UseOnyxSelector} from '../../lib/useOnyx';
 
 const ONYXKEYS = {
@@ -81,13 +80,13 @@ describe('useOnyx', () => {
         });
 
         /**
-         * Expected renders: 2.
+         * Expected renders: 1.
          */
-        test('data in storage but not yet in cache', async () => {
+        test('data set via Onyx.set before render', async () => {
             const key = ONYXKEYS.TEST_KEY;
             await measureRenders(<UseOnyxWrapper onyxKey={key} />, {
                 beforeEach: async () => {
-                    await StorageMock.setItem(key, 'test');
+                    await Onyx.set(key, 'test');
                 },
                 scenario: async () => {
                     await screen.findByText(dataMatcher(key, 'test'));
@@ -209,7 +208,7 @@ describe('useOnyx', () => {
                 />,
                 {
                     beforeEach: async () => {
-                        await StorageMock.setItem(key, 'test');
+                        await Onyx.set(key, 'test');
                     },
                     scenario: async () => {
                         await screen.findByText(dataMatcher(key, undefined));
@@ -223,9 +222,9 @@ describe('useOnyx', () => {
 
     describe('multiple calls', () => {
         /**
-         * Expected renders: 2.
+         * Expected renders: 1.
          */
-        test('3 calls loading from storage', async () => {
+        test('3 calls loading from cache', async () => {
             function TestComponent() {
                 const [testKeyData, testKeyMetadata] = useOnyx(ONYXKEYS.TEST_KEY);
                 const [testKey2Data, testKey2Metadata] = useOnyx(ONYXKEYS.TEST_KEY_2);
@@ -254,9 +253,9 @@ describe('useOnyx', () => {
 
             await measureRenders(<TestComponent />, {
                 beforeEach: async () => {
-                    await StorageMock.setItem(ONYXKEYS.TEST_KEY, 'test');
-                    await StorageMock.setItem(ONYXKEYS.TEST_KEY_2, 'test2');
-                    await StorageMock.setItem(ONYXKEYS.TEST_KEY_3, 'test3');
+                    await Onyx.set(ONYXKEYS.TEST_KEY, 'test');
+                    await Onyx.set(ONYXKEYS.TEST_KEY_2, 'test2');
+                    await Onyx.set(ONYXKEYS.TEST_KEY_3, 'test3');
                 },
                 scenario: async () => {
                     await screen.findByText(dataMatcher(ONYXKEYS.TEST_KEY, 'test'));
