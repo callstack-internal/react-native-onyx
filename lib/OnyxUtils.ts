@@ -739,8 +739,7 @@ function retryOperation<TMethod extends RetriableOnyxOperation>(error: Error, on
 
     if (nextRetryAttempt > MAX_STORAGE_OPERATION_RETRY_ATTEMPTS) {
         Logger.logAlert(`Storage operation failed after ${MAX_STORAGE_OPERATION_RETRY_ATTEMPTS} retries. Error: ${error}. onyxMethod: ${onyxMethod.name}.`);
-        reportStorageQuota();
-        return Promise.resolve();
+        return reportStorageQuota();
     }
 
     // @ts-expect-error No overload matches this call.
@@ -872,7 +871,7 @@ function initializeWithDefaultKeyStates(): Promise<void> {
     // 2. All subsequent reads are synchronous cache hits
     return Storage.getAll()
         .then((pairs) => {
-            const allDataFromStorage: Record<string, unknown> = {};
+            const allDataFromStorage: Record<OnyxKey, OnyxValue<OnyxKey>> = {};
             for (const [key, value] of pairs) {
                 // RAM-only keys should never be loaded from storage as they may have stale persisted data
                 // from before the key was migrated to RAM-only.
@@ -902,7 +901,6 @@ function initializeWithDefaultKeyStates(): Promise<void> {
 
             // Only notify subscribers for default key states — same as before.
             // Other keys will be picked up by subscribers when they connect.
-            // FIXME: Maybe we dont need this, but some tests in E/App are failing if we remove it.
             for (const [key, value] of Object.entries(merged ?? {})) keyChanged(key, value);
         })
         .catch((error) => {
@@ -916,6 +914,7 @@ function initializeWithDefaultKeyStates(): Promise<void> {
             // Boot with defaults so the app renders instead of deadlocking.
             // Users will get a fresh-install experience but the app won't be bricked.
             cache.merge(defaultKeyStates);
+            for (const [key, value] of Object.entries(defaultKeyStates)) keyChanged(key, value);
         });
 }
 

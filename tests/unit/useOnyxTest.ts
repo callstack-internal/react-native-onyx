@@ -107,18 +107,16 @@ describe('useOnyx', () => {
         });
 
         it('should return loaded state after an Onyx.clear() call while connecting and loading from cache', async () => {
-            // Write directly to storage so the data is not in cache when Onyx.clear() is called
-            // TODO: Check if this test still makes sense
-            await StorageMock.setItem(ONYXKEYS.TEST_KEY, 'test');
+            await Onyx.set(ONYXKEYS.TEST_KEY, 'test');
 
             Onyx.clear();
 
             const {result: result1} = renderHook(() => useOnyx(ONYXKEYS.TEST_KEY));
             const {result: result2} = renderHook(() => useOnyx(ONYXKEYS.TEST_KEY));
 
-            expect(result1.current[0]).toBeUndefined();
+            expect(result1.current[0]).toEqual('test');
             expect(result1.current[1].status).toEqual('loaded');
-            expect(result2.current[0]).toBeUndefined();
+            expect(result2.current[0]).toEqual('test');
             expect(result2.current[1].status).toEqual('loaded');
 
             Onyx.merge(ONYXKEYS.TEST_KEY, 'test2');
@@ -848,8 +846,7 @@ describe('useOnyx', () => {
         });
 
         it('should always return undefined when subscribing to a skippable collection member id', async () => {
-            // TODO: Check if this test still makes sense
-            await StorageMock.setItem<string>(`${ONYXKEYS.COLLECTION.TEST_KEY}skippable-id`, 'skippable-id_value');
+            await Onyx.set(`${ONYXKEYS.COLLECTION.TEST_KEY}skippable-id`, 'skippable-id_value');
 
             const {result} = renderHook(() => useOnyx(`${ONYXKEYS.COLLECTION.TEST_KEY}skippable-id`));
 

@@ -247,7 +247,7 @@ class OnyxConnectionManager {
      * Disconnect all subscribers from Onyx.
      */
     disconnectAll(): void {
-        for (const [, connectionMetadata] of this.connectionsMap.entries()) {
+        for (const connectionMetadata of this.connectionsMap.values()) {
             OnyxUtils.unsubscribeFromKey(connectionMetadata.subscriptionID);
         }
 
