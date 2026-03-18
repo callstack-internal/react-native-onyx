@@ -43,6 +43,16 @@ type PageCountResult = {
 
 const DB_NAME = 'OnyxDB';
 
+type MultiGetStrategy = 'in_clause' | 'in_clause_no_parse' | 'json_each_join' | 'chunked_500' | 'temp_table';
+let activeMultiGetStrategy: MultiGetStrategy = 'in_clause';
+
+/**
+ * Sets the SQL strategy used by multiGet. For benchmarking only — not for production use.
+ */
+function setMultiGetStrategy(strategy: MultiGetStrategy) {
+    activeMultiGetStrategy = strategy;
+}
+
 /**
  * Prevents the stringifying of the object markers.
  */
@@ -107,13 +117,70 @@ const provider: StorageProvider<NitroSQLiteConnection | undefined> = {
             throw new Error('Store is not initialized!');
         }
 
-        const placeholders = keys.map(() => '?').join(',');
-        const command = `SELECT record_key, valueJSON FROM keyvaluepairs WHERE record_key IN (${placeholders});`;
-        return provider.store.executeAsync<OnyxSQLiteKeyValuePair>(command, keys).then(({rows}) => {
+        const store = provider.store;
+
+        const parseRows = (rows: {_array: OnyxSQLiteKeyValuePair[]} | undefined): StorageKeyValuePair[] => {
             // eslint-disable-next-line no-underscore-dangle
             const result = rows?._array.map((row) => [row.record_key, JSON.parse(row.valueJSON)]);
             return (result ?? []) as StorageKeyValuePair[];
-        });
+        };
+
+        // Same query as in_clause but returns raw rows without JSON.parse — isolates SQL+bridge cost
+        if (activeMultiGetStrategy === 'in_clause_no_parse') {
+            const placeholders = keys.map(() => '?').join(',');
+            const command = `SELECT record_key, valueJSON FROM keyvaluepairs WHERE record_key IN (${placeholders});`;
+            // eslint-disable-next-line no-underscore-dangle
+            return store.executeAsync<OnyxSQLiteKeyValuePair>(command, keys).then(({rows}) => (rows?._array ?? []) as unknown as StorageKeyValuePair[]);
+        }
+
+        if (activeMultiGetStrategy === 'json_each_join') {
+            const command = `SELECT kv.record_key, kv.valueJSON FROM keyvaluepairs kv INNER JOIN json_each(?) je ON kv.record_key = je.value;`;
+            return store.executeAsync<OnyxSQLiteKeyValuePair>(command, [JSON.stringify(keys)]).then(({rows}) => parseRows(rows));
+        }
+
+        if (activeMultiGetStrategy === 'chunked_500') {
+            const chunkSize = 500;
+            const chunks: string[][] = [];
+            for (let i = 0; i < keys.length; i += chunkSize) {
+                chunks.push(keys.slice(i, i + chunkSize));
+            }
+            return chunks.reduce(
+                (promise, chunk) =>
+                    promise.then((acc) => {
+                        const placeholders = chunk.map(() => '?').join(',');
+                        return store
+                            .executeAsync<OnyxSQLiteKeyValuePair>(`SELECT record_key, valueJSON FROM keyvaluepairs WHERE record_key IN (${placeholders});`, chunk)
+                            .then(({rows}) => [...acc, ...parseRows(rows)]);
+                    }),
+                Promise.resolve([] as StorageKeyValuePair[]),
+            );
+        }
+
+        if (activeMultiGetStrategy === 'temp_table') {
+            const tableName = `temp_multiGet_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            return store
+                .executeAsync(`CREATE TEMP TABLE ${tableName} (record_key TEXT PRIMARY KEY);`)
+                .then(() => {
+                    const insertQuery = `INSERT INTO ${tableName} (record_key) VALUES (?);`;
+                    const insertParams = keys.map((key) => [key]);
+                    return store.executeBatchAsync([{query: insertQuery, params: insertParams}]);
+                })
+                .then(() =>
+                    store.executeAsync<OnyxSQLiteKeyValuePair>(
+                        `SELECT k.record_key, k.valueJSON FROM keyvaluepairs AS k INNER JOIN ${tableName} AS t ON k.record_key = t.record_key;`,
+                    ),
+                )
+                .then(({rows}) => {
+                    const result = parseRows(rows);
+                    store.executeAsync(`DROP TABLE IF EXISTS ${tableName};`);
+                    return result;
+                });
+        }
+
+        // Default: in_clause (current production strategy)
+        const placeholders = keys.map(() => '?').join(',');
+        const command = `SELECT record_key, valueJSON FROM keyvaluepairs WHERE record_key IN (${placeholders});`;
+        return store.executeAsync<OnyxSQLiteKeyValuePair>(command, keys).then(({rows}) => parseRows(rows));
     },
     setItem(key, value) {
         if (!provider.store) {
@@ -239,5 +306,55 @@ const provider: StorageProvider<NitroSQLiteConnection | undefined> = {
     },
 };
 
+type QueryPlanRow = {id: number; parent: number; notused: number; detail: string};
+
+/**
+ * Runs EXPLAIN QUERY PLAN for multiGet strategies on a given set of keys.
+ * Returns the query plans so we can understand why certain queries are slow.
+ */
+function explainQueryPlan(keys: string[]): Promise<Record<string, QueryPlanRow[]>> {
+    if (!provider.store) {
+        throw new Error('Store is not initialized!');
+    }
+    const store = provider.store;
+    // eslint-disable-next-line no-underscore-dangle
+    const getRows = (result: {rows?: {_array: QueryPlanRow[]}}) => result.rows?._array ?? [];
+
+    const placeholders = keys.map(() => '?').join(',');
+    const tableName = `tmp_explain_${Date.now()}`;
+
+    let inRows: QueryPlanRow[] = [];
+    let tempRows: QueryPlanRow[] = [];
+    let jsonRows: QueryPlanRow[] = [];
+
+    return store
+        .executeAsync<QueryPlanRow>(`EXPLAIN QUERY PLAN SELECT record_key, valueJSON FROM keyvaluepairs WHERE record_key IN (${placeholders});`, keys)
+        .then((r) => {
+            inRows = getRows(r);
+            return store.executeAsync(`CREATE TEMP TABLE ${tableName} (record_key TEXT PRIMARY KEY);`);
+        })
+        .then(() => store.executeBatchAsync([{query: `INSERT INTO ${tableName} (record_key) VALUES (?);`, params: keys.map((k) => [k])}]))
+        .then(() =>
+            store.executeAsync<QueryPlanRow>(
+                `EXPLAIN QUERY PLAN SELECT k.record_key, k.valueJSON FROM keyvaluepairs AS k INNER JOIN ${tableName} AS t ON k.record_key = t.record_key;`,
+            ),
+        )
+        .then((r) => {
+            tempRows = getRows(r);
+            return store.executeAsync(`DROP TABLE IF EXISTS ${tableName};`);
+        })
+        .then(() =>
+            store.executeAsync<QueryPlanRow>(
+                `EXPLAIN QUERY PLAN SELECT kv.record_key, kv.valueJSON FROM keyvaluepairs kv INNER JOIN json_each(?) je ON kv.record_key = je.value;`,
+                [JSON.stringify(keys)],
+            ),
+        )
+        .then((r) => {
+            jsonRows = getRows(r);
+            return {in_clause: inRows, temp_table: tempRows, json_each_join: jsonRows};
+        });
+}
+
 export default provider;
-export type {OnyxSQLiteKeyValuePair};
+export type {OnyxSQLiteKeyValuePair, MultiGetStrategy};
+export {setMultiGetStrategy, explainQueryPlan};
