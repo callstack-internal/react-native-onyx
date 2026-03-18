@@ -32,28 +32,25 @@ describe('OnyxSnapshotCache', () => {
 
     describe('basic cache operations', () => {
         it('should generate unique cache keys for different options', () => {
-            const selector: TestSelector = (data) => {
+            const selector1: TestSelector = (data) => {
                 const testData = data as TestData | undefined;
                 return testData?.name ?? '';
             };
-            const optionsWithSelector: UseOnyxOptions<OnyxKey, string> = {
-                selector,
-                initWithStoredValues: true,
+            const selector2: TestSelector = (data) => {
+                const testData = data as TestData | undefined;
+                return testData?.id ?? '';
             };
-            const optionsWithoutSelector: UseOnyxOptions<OnyxKey, string> = {
-                initWithStoredValues: false,
-            };
-            const keyWithSelector = cache.registerConsumer(optionsWithSelector);
-            const keyWithoutSelector = cache.registerConsumer(optionsWithoutSelector);
-            const keyWithUndefined = cache.registerConsumer({});
+            const keyWithSelector1 = cache.registerConsumer({selector: selector1});
+            const keyWithSelector2 = cache.registerConsumer({selector: selector2});
+            const keyWithoutSelector = cache.registerConsumer({});
 
-            // Different option combinations should produce different cache keys
-            expect(keyWithSelector).toContain('0_'); // Should contain selector ID
-            expect(keyWithoutSelector).toContain('no_selector'); // Should indicate no selector
-            expect(keyWithUndefined).toContain('no_selector'); // Should indicate no selector
+            // Different selectors should produce different cache keys
+            expect(keyWithSelector1).toBe('0'); // First selector ID
+            expect(keyWithSelector2).toBe('1'); // Second selector ID
+            expect(keyWithoutSelector).toBe('no_selector'); // No selector
 
             // All keys should be unique
-            expect(new Set([keyWithSelector, keyWithoutSelector, keyWithUndefined]).size).toBe(3);
+            expect(new Set([keyWithSelector1, keyWithSelector2, keyWithoutSelector]).size).toBe(3);
         });
 
         it('should store and retrieve cached results', () => {

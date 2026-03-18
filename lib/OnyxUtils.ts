@@ -40,6 +40,7 @@ import * as GlobalSettings from './GlobalSettings';
 import decorateWithMetrics from './metrics';
 import type {StorageKeyValuePair} from './storage/providers/types';
 import logMessages from './logMessages';
+import {notifyKeyChangeListeners, notifyCollectionKeyChangeListeners, clearKeyChangeListeners} from './OnyxKeyChangeListeners';
 
 // Method constants
 const METHOD = {
@@ -508,6 +509,9 @@ function keysChanged<TKey extends CollectionKeyBase>(
     partialCollection: OnyxCollection<KeyValueMapping[TKey]>,
     partialPreviousCollection: OnyxCollection<KeyValueMapping[TKey]> | undefined,
 ): void {
+    // Notify lightweight key-change listeners (used by useOnyx).
+    notifyCollectionKeyChangeListeners(collectionKey, partialCollection as Record<string, unknown> | undefined);
+
     // We prepare the "cached collection" which is the entire collection + the new partial data that
     // was merged in via mergeCollection().
     const cachedCollection = getCachedCollection(collectionKey);
@@ -602,6 +606,14 @@ function keyChanged<TKey extends OnyxKey>(
     // For performance reason, we look for the given key and later if don't find it we look for the collection key, instead of checking if it is a collection key first.
     let stateMappingKeys = onyxKeyToSubscriptionIDs.get(key) ?? [];
     const collectionKey = getCollectionKey(key);
+
+    // Notify lightweight key-change listeners (used by useOnyx).
+    // When processing a collection update, skip collection-level listeners here — keysChanged
+    // will notify them once for the whole batch (matching the old waitForCollectionCallback behavior).
+    // Only pass sourceValue for collection member key changes — individual key subscribers never received it.
+    // sourceValue is only meaningful for collection-level listeners (matching the old waitForCollectionCallback behavior).
+    const sourceValue = collectionKey ? {[key]: value} : undefined;
+    notifyKeyChangeListeners(key, isProcessingCollectionUpdate, sourceValue);
 
     if (collectionKey) {
         // Getting the collection key from the specific key because only collection keys were stored in the mapping.
@@ -1557,6 +1569,7 @@ function clearOnyxUtilsInternals() {
     callbackToStateMapping = {};
     onyxKeyToSubscriptionIDs = new Map();
     lastConnectionCallbackData = new Map();
+    clearKeyChangeListeners();
 }
 
 const OnyxUtils = {
