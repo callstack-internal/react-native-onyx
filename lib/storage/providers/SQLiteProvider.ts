@@ -43,7 +43,7 @@ type PageCountResult = {
 
 const DB_NAME = 'OnyxDB';
 
-type MultiGetStrategy = 'in_clause' | 'in_clause_no_parse' | 'json_each_join' | 'chunked_500' | 'temp_table';
+type MultiGetStrategy = 'in_clause' | 'json_each_join' | 'chunked_500' | 'temp_table';
 let activeMultiGetStrategy: MultiGetStrategy = 'in_clause';
 
 /**
@@ -124,14 +124,6 @@ const provider: StorageProvider<NitroSQLiteConnection | undefined> = {
             const result = rows?._array.map((row) => [row.record_key, JSON.parse(row.valueJSON)]);
             return (result ?? []) as StorageKeyValuePair[];
         };
-
-        // Same query as in_clause but returns raw rows without JSON.parse — isolates SQL+bridge cost
-        if (activeMultiGetStrategy === 'in_clause_no_parse') {
-            const placeholders = keys.map(() => '?').join(',');
-            const command = `SELECT record_key, valueJSON FROM keyvaluepairs WHERE record_key IN (${placeholders});`;
-            // eslint-disable-next-line no-underscore-dangle
-            return store.executeAsync<OnyxSQLiteKeyValuePair>(command, keys).then(({rows}) => (rows?._array ?? []) as unknown as StorageKeyValuePair[]);
-        }
 
         if (activeMultiGetStrategy === 'json_each_join') {
             const command = `SELECT kv.record_key, kv.valueJSON FROM keyvaluepairs kv INNER JOIN json_each(?) je ON kv.record_key = je.value;`;
