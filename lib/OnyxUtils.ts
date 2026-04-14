@@ -6,6 +6,7 @@ import * as Logger from './Logger';
 import type Onyx from './Onyx';
 import cache, {TASK} from './OnyxCache';
 import OnyxKeys from './OnyxKeys';
+import OnyxKeyListeners from './OnyxKeyListeners';
 import * as Str from './Str';
 import Storage from './storage';
 import type {
@@ -619,6 +620,13 @@ function keysChanged<TKey extends CollectionKeyBase>(
             }
         }
     }
+
+    // Notify lightweight key listeners: each changed member key individually, collection once
+    const changedKeys = Object.keys(partialCollection ?? {});
+    for (const changedKey of changedKeys) {
+        OnyxKeyListeners.notifyKey(changedKey);
+    }
+    OnyxKeyListeners.notifyCollection(collectionKey);
 }
 
 /**
@@ -704,6 +712,13 @@ function keyChanged<TKey extends OnyxKey>(
         }
 
         console.error('Warning: Found a matching subscriber to a key that changed, but no callback could be found.');
+    }
+
+    // Notify lightweight key listeners
+    if (isProcessingCollectionUpdate) {
+        OnyxKeyListeners.notifyKey(key);
+    } else {
+        OnyxKeyListeners.notify(key);
     }
 }
 
