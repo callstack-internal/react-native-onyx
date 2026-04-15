@@ -7,6 +7,7 @@ import type Onyx from './Onyx';
 import cache, {TASK} from './OnyxCache';
 import OnyxKeys from './OnyxKeys';
 import OnyxKeyListeners from './OnyxKeyListeners';
+import onyxSnapshotCache from './OnyxSnapshotCache';
 import * as Str from './Str';
 import Storage from './storage';
 import type {
@@ -621,9 +622,10 @@ function keysChanged<TKey extends CollectionKeyBase>(
         }
     }
 
-    // Notify lightweight key listeners: each changed member key individually, collection once
+    // Invalidate snapshot cache and notify lightweight key listeners
     const changedKeys = Object.keys(partialCollection ?? {});
     for (const changedKey of changedKeys) {
+        onyxSnapshotCache.invalidateForKey(changedKey);
         OnyxKeyListeners.notifyKey(changedKey);
     }
     OnyxKeyListeners.notifyCollection(collectionKey);
@@ -646,6 +648,16 @@ function keyChanged<TKey extends OnyxKey>(
         cache.addLastAccessedKey(key, OnyxKeys.isCollectionKey(key));
     } else {
         cache.removeLastAccessedKey(key);
+    }
+
+    // Invalidate snapshot cache and notify lightweight key listeners.
+    // This must happen before the early return below so useOnyx subscribers
+    // are always notified, even when there are no traditional Onyx.connect() subscribers.
+    onyxSnapshotCache.invalidateForKey(key);
+    if (isProcessingCollectionUpdate) {
+        OnyxKeyListeners.notifyKey(key);
+    } else {
+        OnyxKeyListeners.notify(key);
     }
 
     // We get the subscribers interested in the key that has just changed. If the subscriber's  key is a collection key then we will
@@ -712,13 +724,6 @@ function keyChanged<TKey extends OnyxKey>(
         }
 
         console.error('Warning: Found a matching subscriber to a key that changed, but no callback could be found.');
-    }
-
-    // Notify lightweight key listeners
-    if (isProcessingCollectionUpdate) {
-        OnyxKeyListeners.notifyKey(key);
-    } else {
-        OnyxKeyListeners.notify(key);
     }
 }
 
