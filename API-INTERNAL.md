@@ -72,10 +72,6 @@ If the requested key is a collection, it will return an object with all the coll
 <dt><a href="#sendDataToConnection">sendDataToConnection()</a></dt>
 <dd><p>Sends the data obtained from the keys to the connection.</p>
 </dd>
-<dt><a href="#addKeyToRecentlyAccessedIfNeeded">addKeyToRecentlyAccessedIfNeeded()</a></dt>
-<dd><p>We check to see if this key is flagged as safe for eviction and add it to the recentlyAccessedKeys list so that when we
-run out of storage the least recently accessed key can be removed.</p>
-</dd>
 <dt><a href="#getCollectionDataAndSendAsObject">getCollectionDataAndSendAsObject()</a></dt>
 <dd><p>Gets the data for a given an array of matching keys, combines them into an object, and sends the result back to the subscriber.</p>
 </dd>
@@ -148,6 +144,9 @@ that this internal function allows passing an additional <code>mergeReplaceNullP
 <dd><p>Sets keys in a collection by replacing all targeted collection members with new values.
 Any existing collection members not included in the new data will not be removed.
 Retries on failure.</p>
+</dd>
+<dt><a href="#getCallbackToStateMapping">getCallbackToStateMapping()</a></dt>
+<dd><p>Getter - returns the callback to state mapping, useful in test environments.</p>
 </dd>
 <dt><a href="#clearOnyxUtilsInternals">clearOnyxUtilsInternals()</a></dt>
 <dd><p>Clear internal variables used in this file, useful in test environments.</p>
@@ -294,23 +293,6 @@ If the requested key is a collection, it will return an object with all the coll
 When a collection of keys change, search for any callbacks matching the collection key and trigger those callbacks
 
 **Kind**: global function  
-
-* [keysChanged()](#keysChanged)
-    * [~isSubscribedToCollectionKey](#keysChanged..isSubscribedToCollectionKey)
-    * [~isSubscribedToCollectionMemberKey](#keysChanged..isSubscribedToCollectionMemberKey)
-
-<a name="keysChanged..isSubscribedToCollectionKey"></a>
-
-### keysChanged~isSubscribedToCollectionKey
-e.g. Onyx.connect({key: ONYXKEYS.COLLECTION.REPORT, callback: ...});
-
-**Kind**: inner constant of [<code>keysChanged</code>](#keysChanged)  
-<a name="keysChanged..isSubscribedToCollectionMemberKey"></a>
-
-### keysChanged~isSubscribedToCollectionMemberKey
-e.g. Onyx.connect({key: `${ONYXKEYS.COLLECTION.REPORT}{reportID}`, callback: ...});
-
-**Kind**: inner constant of [<code>keysChanged</code>](#keysChanged)  
 <a name="keyChanged"></a>
 
 ## keyChanged()
@@ -325,13 +307,6 @@ keyChanged(key, value, subscriber => subscriber.initWithStoredValues === false)
 
 ## sendDataToConnection()
 Sends the data obtained from the keys to the connection.
-
-**Kind**: global function  
-<a name="addKeyToRecentlyAccessedIfNeeded"></a>
-
-## addKeyToRecentlyAccessedIfNeeded()
-We check to see if this key is flagged as safe for eviction and add it to the recentlyAccessedKeys list so that when we
-run out of storage the least recently accessed key can be removed.
 
 **Kind**: global function  
 <a name="getCollectionDataAndSendAsObject"></a>
@@ -530,6 +505,12 @@ Retries on failure.
 | params.collection | Object collection keyed by individual collection member keys and values |
 | retryAttempt | retry attempt |
 
+<a name="getCallbackToStateMapping"></a>
+
+## getCallbackToStateMapping()
+Getter - returns the callback to state mapping, useful in test environments.
+
+**Kind**: global function  
 <a name="clearOnyxUtilsInternals"></a>
 
 ## clearOnyxUtilsInternals()

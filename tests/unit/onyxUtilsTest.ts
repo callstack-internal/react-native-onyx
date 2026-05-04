@@ -5,6 +5,8 @@ import type {GenericDeepRecord} from '../types';
 import utils from '../../lib/utils';
 import type {Collection, OnyxCollection} from '../../lib/types';
 import type GenericCollection from '../utils/GenericCollection';
+import OnyxCache from '../../lib/OnyxCache';
+import * as Logger from '../../lib/Logger';
 import StorageMock from '../../lib/storage';
 import createDeferredTask from '../../lib/createDeferredTask';
 import waitForPromisesToResolve from '../utils/waitForPromisesToResolve';
@@ -93,6 +95,74 @@ describe('OnyxUtils', () => {
     beforeEach(() => Onyx.clear());
 
     afterEach(() => jest.clearAllMocks());
+
+    describe('skippable member subscriptions', () => {
+        const BASE = ONYXKEYS.COLLECTION.TEST_KEY;
+
+        beforeEach(() => {
+            // Enable skipping of undefined member IDs for these tests
+            OnyxUtils.setSkippableCollectionMemberIDs(new Set(['undefined']));
+        });
+
+        afterEach(() => {
+            // Restore to no skippable IDs to avoid affecting other tests
+            OnyxUtils.setSkippableCollectionMemberIDs(new Set());
+        });
+
+        it('does not emit initial callback for report_undefined member', async () => {
+            const key = `${BASE}undefined`;
+            const callback = jest.fn();
+            Onyx.connect({key, callback});
+
+            // Flush async subscription flow
+            await act(async () => waitForPromisesToResolve());
+
+            // No initial data should be sent for a skippable member
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        it('still emits for valid member keys', async () => {
+            const key = `${BASE}123`;
+            await Onyx.set(key, {id: 123});
+
+            const callback = jest.fn();
+            Onyx.connect({key, callback});
+            await act(async () => waitForPromisesToResolve());
+            expect(callback).toHaveBeenCalledTimes(1);
+            expect(callback).toHaveBeenCalledWith({id: 123}, key);
+        });
+
+        it('omits skippable members from base collection', async () => {
+            const undefinedKey = `${BASE}undefined`;
+            const validKey = `${BASE}1`;
+
+            await Onyx.set(undefinedKey, {bad: true});
+            await Onyx.set(validKey, {ok: true});
+
+            let received: Record<string, unknown> | undefined;
+            Onyx.connect({
+                key: BASE,
+                waitForCollectionCallback: true,
+                callback: (value) => {
+                    received = value as Record<string, unknown>;
+                },
+            });
+            await act(async () => waitForPromisesToResolve());
+            expect(received).toEqual({[validKey]: {ok: true}});
+            expect(Object.keys(received ?? {})).not.toContain(undefinedKey);
+        });
+
+        it('does not register an active subscription in callbackToStateMapping for a skippable member', async () => {
+            const skippableKey = `${BASE}undefined`;
+            Onyx.connect({key: skippableKey, callback: jest.fn()});
+
+            await act(async () => waitForPromisesToResolve());
+
+            const mappings = OnyxUtils.getCallbackToStateMapping();
+            const hasActiveSubscription = Object.values(mappings).some((m) => m.key === skippableKey);
+            expect(hasActiveSubscription).toBe(false);
+        });
+    });
 
     describe('partialSetCollection', () => {
         beforeEach(() => {
@@ -279,6 +349,133 @@ describe('OnyxUtils', () => {
 
             await Onyx.disconnect(connection);
         });
+
+        it('should notify collection-level subscribers with waitForCollectionCallback', async () => {
+            const entryKey = `${ONYXKEYS.COLLECTION.TEST_KEY}789`;
+            const entryData = {value: 'data'};
+
+            const collectionCallback = jest.fn();
+            const connection = Onyx.connect({
+                key: ONYXKEYS.COLLECTION.TEST_KEY,
+                callback: collectionCallback,
+                waitForCollectionCallback: true,
+                initWithStoredValues: false,
+            });
+
+            await Onyx.set(entryKey, entryData);
+            collectionCallback.mockClear();
+
+            // Trigger keysChanged directly with a partial collection
+            OnyxUtils.keysChanged(ONYXKEYS.COLLECTION.TEST_KEY, {[entryKey]: entryData}, {});
+
+            expect(collectionCallback).toHaveBeenCalledTimes(1);
+            // Collection subscriber receives the full cached collection, subscriber.key, and partial
+            const [receivedCollection, receivedKey, receivedPartial] = collectionCallback.mock.calls[0];
+            expect(receivedKey).toBe(ONYXKEYS.COLLECTION.TEST_KEY);
+            expect(receivedCollection[entryKey]).toEqual(entryData);
+            expect(receivedPartial).toEqual({[entryKey]: entryData});
+
+            Onyx.disconnect(connection);
+        });
+
+        it('should skip notification when member value has same reference in previous and current collection', async () => {
+            const entryKey = `${ONYXKEYS.COLLECTION.TEST_KEY}same`;
+            const sameValue = {value: 'unchanged'};
+
+            await Onyx.set(entryKey, sameValue);
+
+            const callbackSpy = jest.fn();
+            const connection = Onyx.connect({
+                key: entryKey,
+                callback: callbackSpy,
+                initWithStoredValues: false,
+            });
+            await waitForPromisesToResolve();
+            callbackSpy.mockClear();
+
+            // Simulate keysChanged where the previous and current value are the SAME reference
+            // (which happens with frozen snapshots when nothing changed). === should skip notification.
+            OnyxUtils.keysChanged(ONYXKEYS.COLLECTION.TEST_KEY, {[entryKey]: sameValue}, {[entryKey]: sameValue});
+
+            expect(callbackSpy).not.toHaveBeenCalled();
+
+            Onyx.disconnect(connection);
+        });
+
+        it('should notify member subscribers only for changed keys in a batched update', async () => {
+            const keyA = `${ONYXKEYS.COLLECTION.TEST_KEY}A`;
+            const keyB = `${ONYXKEYS.COLLECTION.TEST_KEY}B`;
+            const keyC = `${ONYXKEYS.COLLECTION.TEST_KEY}C`;
+
+            const dataA = {value: 'A'};
+            const dataB = {value: 'B'};
+            const dataC = {value: 'C'};
+
+            await Onyx.multiSet({[keyA]: dataA, [keyB]: dataB, [keyC]: dataC});
+
+            const spyA = jest.fn();
+            const spyB = jest.fn();
+            const spyC = jest.fn();
+            const connA = Onyx.connect({key: keyA, callback: spyA, initWithStoredValues: false});
+            const connB = Onyx.connect({key: keyB, callback: spyB, initWithStoredValues: false});
+            const connC = Onyx.connect({key: keyC, callback: spyC, initWithStoredValues: false});
+            await waitForPromisesToResolve();
+            spyA.mockClear();
+            spyB.mockClear();
+            spyC.mockClear();
+
+            // Update cache so keysChanged reads the new values via getCachedCollection
+            const newA = {value: 'A-updated'};
+            const newC = {value: 'C-updated'};
+            OnyxCache.set(keyA, newA);
+            OnyxCache.set(keyC, newC);
+            // keyB stays the same reference
+
+            OnyxUtils.keysChanged(ONYXKEYS.COLLECTION.TEST_KEY, {[keyA]: newA, [keyB]: dataB, [keyC]: newC}, {[keyA]: dataA, [keyB]: dataB, [keyC]: dataC});
+
+            expect(spyA).toHaveBeenCalledTimes(1);
+            expect(spyB).not.toHaveBeenCalled();
+            expect(spyC).toHaveBeenCalledTimes(1);
+
+            Onyx.disconnect(connA);
+            Onyx.disconnect(connB);
+            Onyx.disconnect(connC);
+        });
+
+        it('should catch errors thrown by subscriber callbacks and continue notifying others', async () => {
+            const entryKey = `${ONYXKEYS.COLLECTION.TEST_KEY}errorTest`;
+            const entryData = {value: 'data'};
+
+            await Onyx.set(entryKey, entryData);
+
+            const failingCallback = jest.fn(() => {
+                throw new Error('subscriber failure');
+            });
+            const workingCallback = jest.fn();
+
+            const connFailing = Onyx.connect({key: entryKey, callback: failingCallback, initWithStoredValues: false});
+            const connWorking = Onyx.connect({key: entryKey, callback: workingCallback, initWithStoredValues: false});
+            await waitForPromisesToResolve();
+            failingCallback.mockClear();
+            workingCallback.mockClear();
+
+            // Spy on Logger to verify the error is logged
+            const logSpy = jest.spyOn(Logger, 'logAlert').mockImplementation(() => undefined);
+
+            const newData = {value: 'new'};
+            // Update the cache so keysChanged sees the new value as different from previous
+            OnyxCache.set(entryKey, newData);
+            OnyxUtils.keysChanged(ONYXKEYS.COLLECTION.TEST_KEY, {[entryKey]: newData}, {[entryKey]: entryData});
+
+            // Both callbacks should have been attempted; error should be logged
+            expect(failingCallback).toHaveBeenCalled();
+            expect(workingCallback).toHaveBeenCalled();
+            expect(logSpy).toHaveBeenCalled();
+
+            logSpy.mockRestore();
+            Onyx.disconnect(connFailing);
+            Onyx.disconnect(connWorking);
+        });
     });
 
     describe('mergeChanges', () => {
@@ -359,7 +556,7 @@ describe('OnyxUtils', () => {
         const retryOperationSpy = jest.spyOn(OnyxUtils, 'retryOperation');
         const genericError = new Error('Generic storage error');
         const invalidDataError = new Error("Failed to execute 'put' on 'IDBObjectStore': invalid data");
-        const memoryError = new Error('out of memory');
+        const diskFullError = new Error('database or disk is full');
 
         it('should retry only one time if the operation is firstly failed and then passed', async () => {
             StorageMock.setItem = jest.fn(StorageMock.setItem).mockRejectedValueOnce(genericError).mockImplementation(StorageMock.setItem);
@@ -386,12 +583,202 @@ describe('OnyxUtils', () => {
         });
 
         it('should not retry in case of storage capacity error and no keys to evict', async () => {
-            StorageMock.setItem = jest.fn().mockRejectedValue(memoryError);
+            StorageMock.setItem = jest.fn().mockRejectedValue(diskFullError);
 
             await Onyx.set(ONYXKEYS.TEST_KEY, {test: 'data'});
 
             // Should only be called once since there are no evictable keys
             expect(retryOperationSpy).toHaveBeenCalledTimes(1);
+        });
+
+        it('should include the error in logAlert for IDBObjectStore invalid data errors', async () => {
+            const logAlertSpy = jest.spyOn(Logger, 'logAlert');
+            StorageMock.setItem = jest.fn().mockRejectedValueOnce(invalidDataError);
+
+            await expect(Onyx.set(ONYXKEYS.TEST_KEY, {test: 'data'})).rejects.toThrow(invalidDataError);
+
+            expect(logAlertSpy).toHaveBeenCalledWith(`Attempted to set invalid data set in Onyx. Please ensure all data is serializable. Error: ${invalidDataError}`);
+        });
+
+        it('should include the error in logs when out of storage with no evictable keys', async () => {
+            const logAlertSpy = jest.spyOn(Logger, 'logAlert');
+            const logInfoSpy = jest.spyOn(Logger, 'logInfo');
+            StorageMock.setItem = jest.fn().mockRejectedValue(diskFullError);
+
+            await Onyx.set(ONYXKEYS.TEST_KEY, {test: 'data'});
+
+            expect(logAlertSpy).toHaveBeenCalledWith(`Out of storage. But found no acceptable keys to remove. Error: ${diskFullError}`);
+            expect(logInfoSpy).toHaveBeenCalledWith(`Storage Quota Check -- bytesUsed: 0 bytesRemaining: Infinity. Original error: ${diskFullError}`);
+        });
+
+        it('should include the error in logAlert when out of storage and getDatabaseSize fails', async () => {
+            const dbSizeError = new Error('Failed to estimate storage');
+            const logAlertSpy = jest.spyOn(Logger, 'logAlert');
+            StorageMock.setItem = jest.fn().mockRejectedValue(diskFullError);
+            StorageMock.getDatabaseSize = jest.fn().mockRejectedValue(dbSizeError);
+
+            await Onyx.set(ONYXKEYS.TEST_KEY, {test: 'data'});
+
+            expect(logAlertSpy).toHaveBeenCalledWith(`Unable to get database size. getDatabaseSize error: ${dbSizeError}. Original error: ${diskFullError}`);
+        });
+
+        it('should not re-add an evicted key to recentlyAccessedKeys after removal', async () => {
+            // Re-init with evictable keys so getKeyForEviction() has something to return
+            Object.assign(OnyxUtils.getDeferredInitTask(), createDeferredTask());
+            Onyx.init({
+                keys: ONYXKEYS,
+                evictableKeys: [ONYXKEYS.COLLECTION.TEST_KEY],
+            });
+            await waitForPromisesToResolve();
+
+            const evictableKey = `${ONYXKEYS.COLLECTION.TEST_KEY}1`;
+
+            await Onyx.set(evictableKey, {id: 1});
+            expect(OnyxCache.getKeyForEviction()).toBe(evictableKey);
+
+            await OnyxUtils.remove(evictableKey);
+            expect(OnyxCache.getKeyForEviction()).toBeUndefined();
+        });
+    });
+
+    describe('storage eviction', () => {
+        const diskFullError = new Error('database or disk is full');
+
+        // Use local references that get fresh instances after jest.resetModules()
+        let LocalOnyx: typeof Onyx;
+        let LocalOnyxUtils: typeof OnyxUtils;
+        let LocalOnyxCache: typeof OnyxCache;
+        let LocalStorageMock: typeof StorageMock;
+        let LocalLogger: typeof Logger;
+
+        // Reset all modules to get fresh singletons (OnyxCache, OnyxUtils, etc.)
+        // then re-init Onyx with evictableKeys configured
+        beforeEach(async () => {
+            jest.resetModules();
+
+            LocalOnyx = require('../../lib').default;
+            LocalOnyxUtils = require('../../lib/OnyxUtils').default;
+            LocalOnyxCache = require('../../lib/OnyxCache').default;
+            LocalStorageMock = require('../../lib/storage').default;
+            LocalLogger = require('../../lib/Logger');
+
+            LocalOnyx.init({
+                keys: ONYXKEYS,
+                evictableKeys: [ONYXKEYS.COLLECTION.TEST_KEY],
+            });
+            await waitForPromisesToResolve();
+        });
+
+        it('should evict the least recently accessed evictable key on storage capacity error and retry successfully', async () => {
+            const key1 = `${ONYXKEYS.COLLECTION.TEST_KEY}1`;
+            const key2 = `${ONYXKEYS.COLLECTION.TEST_KEY}2`;
+
+            await LocalOnyx.set(key1, {id: 1});
+            await LocalOnyx.set(key2, {id: 2});
+            expect(LocalOnyxCache.hasCacheForKey(key1)).toBe(true);
+            expect(LocalOnyxCache.hasCacheForKey(key2)).toBe(true);
+
+            // Fail once with capacity error, then succeed
+            LocalStorageMock.setItem = jest.fn(LocalStorageMock.setItem).mockRejectedValueOnce(diskFullError).mockImplementation(LocalStorageMock.setItem);
+
+            await LocalOnyx.set(ONYXKEYS.TEST_KEY, {test: 'data'});
+
+            // key1 was least recently accessed, so it should have been evicted
+            expect(LocalOnyxCache.hasCacheForKey(key1)).toBe(false);
+            // key2 was more recently accessed, so it should still be in cache
+            expect(LocalOnyxCache.hasCacheForKey(key2)).toBe(true);
+            // The write that triggered the error should have succeeded on retry
+            expect(LocalOnyxCache.get(ONYXKEYS.TEST_KEY)).toEqual({test: 'data'});
+        });
+
+        it('should evict the least recently accessed key first (LRU order)', async () => {
+            const key1 = `${ONYXKEYS.COLLECTION.TEST_KEY}1`;
+            const key2 = `${ONYXKEYS.COLLECTION.TEST_KEY}2`;
+            const key3 = `${ONYXKEYS.COLLECTION.TEST_KEY}3`;
+
+            // Set in order: key1, key2, key3
+            await LocalOnyx.set(key1, {id: 1});
+            await LocalOnyx.set(key2, {id: 2});
+            await LocalOnyx.set(key3, {id: 3});
+
+            // Now access key1 again so it becomes most recent
+            await LocalOnyx.merge(key1, {id: 1, updated: true});
+
+            // LRU order should now be: key2 (least recent), key3, key1 (most recent)
+            expect(LocalOnyxCache.getKeyForEviction()).toBe(key2);
+        });
+
+        it('should not evict non-evictable keys', async () => {
+            const evictableKey = `${ONYXKEYS.COLLECTION.TEST_KEY}1`;
+
+            await LocalOnyx.set(evictableKey, {id: 1});
+            await LocalOnyx.set(ONYXKEYS.TEST_KEY, {test: 'not evictable'});
+
+            // The evictable key should be a candidate for eviction
+            expect(LocalOnyxCache.isEvictableKey(evictableKey)).toBe(true);
+            // The non-evictable key should NOT be a candidate
+            expect(LocalOnyxCache.isEvictableKey(ONYXKEYS.TEST_KEY)).toBe(false);
+
+            // Evict it
+            await LocalOnyxUtils.remove(evictableKey);
+
+            // No more evictable candidates
+            expect(LocalOnyxCache.getKeyForEviction()).toBeUndefined();
+            // Non-evictable key should still be in cache
+            expect(LocalOnyxCache.get(ONYXKEYS.TEST_KEY)).toEqual({test: 'not evictable'});
+        });
+
+        it('should not add collection keys to eviction candidates, only their members', async () => {
+            const memberKey = `${ONYXKEYS.COLLECTION.TEST_KEY}1`;
+
+            await LocalOnyx.set(memberKey, {id: 1});
+
+            // The member key should be evictable
+            expect(LocalOnyxCache.getKeyForEviction()).toBe(memberKey);
+
+            // Attempting to add the collection key directly should be filtered out
+            LocalOnyxCache.addLastAccessedKey(ONYXKEYS.COLLECTION.TEST_KEY, true);
+
+            // Should still return the member key, not the collection key
+            expect(LocalOnyxCache.getKeyForEviction()).toBe(memberKey);
+        });
+
+        it('should seed evictable keys from storage at init', async () => {
+            // Set up storage with pre-existing evictable keys before init
+            jest.resetModules();
+
+            LocalOnyx = require('../../lib').default;
+            LocalOnyxCache = require('../../lib/OnyxCache').default;
+            const storage = require('../../lib/storage').default;
+
+            await storage.setItem(`${ONYXKEYS.COLLECTION.TEST_KEY}pre1`, {id: 'pre1'});
+            await storage.setItem(`${ONYXKEYS.COLLECTION.TEST_KEY}pre2`, {id: 'pre2'});
+
+            // Init — addEvictableKeysToRecentlyAccessedList should seed them
+            LocalOnyx.init({
+                keys: ONYXKEYS,
+                evictableKeys: [ONYXKEYS.COLLECTION.TEST_KEY],
+            });
+            await waitForPromisesToResolve();
+
+            // Pre-existing keys should be available for eviction without being explicitly accessed
+            const keyForEviction = LocalOnyxCache.getKeyForEviction();
+            expect(keyForEviction).toBeDefined();
+            expect(keyForEviction?.startsWith(ONYXKEYS.COLLECTION.TEST_KEY)).toBe(true);
+        });
+
+        it('should include the error in logs when evicting a key', async () => {
+            const logInfoSpy = jest.spyOn(LocalLogger, 'logInfo');
+            const key1 = `${ONYXKEYS.COLLECTION.TEST_KEY}1`;
+
+            await LocalOnyx.set(key1, {id: 1});
+
+            LocalStorageMock.setItem = jest.fn(LocalStorageMock.setItem).mockRejectedValueOnce(diskFullError).mockImplementation(LocalStorageMock.setItem);
+
+            await LocalOnyx.set(ONYXKEYS.TEST_KEY, {test: 'data'});
+
+            expect(logInfoSpy).toHaveBeenCalledWith(`Out of storage. Evicting least recently accessed key (${key1}) and retrying. Error: ${diskFullError}`);
+            expect(logInfoSpy).toHaveBeenCalledWith(`Storage Quota Check -- bytesUsed: 0 bytesRemaining: Infinity. Original error: ${diskFullError}`);
         });
     });
 

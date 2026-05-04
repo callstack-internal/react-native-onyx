@@ -56,17 +56,17 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(
             // Recompute if input changed, dependencies changed, or first time
             const dependenciesChanged = !shallowEqual(lastDependencies, currentDependencies);
             if (!hasComputed || lastInput !== input || dependenciesChanged) {
-                // Only proceed if we have a valid selector
-                if (selector) {
-                    const newOutput = selector(input);
+                const newOutput = selector(input);
 
-                    // Deep equality mode: only update if output actually changed
-                    if (!hasComputed || !deepEqual(lastOutput, newOutput) || dependenciesChanged) {
-                        lastInput = input;
-                        lastOutput = newOutput;
-                        lastDependencies = [...currentDependencies];
-                        hasComputed = true;
-                    }
+                // Always track the current input to avoid re-running the selector
+                // when the same input is seen again (even if the output didn't change).
+                lastInput = input;
+
+                // Only update the output reference if it actually changed
+                if (!hasComputed || !deepEqual(lastOutput, newOutput) || dependenciesChanged) {
+                    lastOutput = newOutput;
+                    lastDependencies = [...currentDependencies];
+                    hasComputed = true;
                 }
             }
 
@@ -86,6 +86,11 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(
 
     // Indicates if the hook has an active listener subscription.
     const isSubscribedRef = useRef(false);
+
+    // Tracks whether the hook has completed its initial mount subscription.
+    // Used to skip resetting state on first mount (refs are already at default),
+    // so we avoid an extra render when the cached value is available synchronously.
+    const hasMountedRef = useRef(false);
 
     // Stores the `onStoreChange()` function so the dependencies effect can trigger re-evaluation.
     const onStoreChangeFnRef = useRef<(() => void) | null>(null);
@@ -174,11 +179,18 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(
     };
 
     const subscribe = (onStoreChange: () => void): (() => void) => {
-        // Reset internal state for the new key
-        previousValueRef.current = null;
-        newValueRef.current = null;
-        resultRef.current = [undefined, {status: 'loading'}];
+        // Reset internal state so the hook properly transitions through loading
+        // for the new key instead of preserving stale state from the previous one.
+        // Skip on initial mount: refs are already at default and resetting would
+        // discard a value getSnapshot may have already produced before subscribe ran,
+        // causing an extra render.
+        if (hasMountedRef.current) {
+            previousValueRef.current = null;
+            newValueRef.current = null;
+            resultRef.current = [undefined, {status: 'loading'}];
+        }
 
+        hasMountedRef.current = true;
         onStoreChangeFnRef.current = onStoreChange;
         isSubscribedRef.current = true;
 
