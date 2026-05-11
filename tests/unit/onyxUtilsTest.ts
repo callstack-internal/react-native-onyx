@@ -182,7 +182,6 @@ describe('OnyxUtils', () => {
 
             const connection = Onyx.connect({
                 key: ONYXKEYS.COLLECTION.ROUTES,
-                initWithStoredValues: false,
                 callback: (value) => (result = value),
                 waitForCollectionCallback: true,
             });
@@ -219,7 +218,6 @@ describe('OnyxUtils', () => {
 
             const connection = Onyx.connect({
                 key: ONYXKEYS.COLLECTION.ROUTES,
-                initWithStoredValues: false,
                 callback: (value) => (result = value),
                 waitForCollectionCallback: true,
             });
@@ -243,7 +241,6 @@ describe('OnyxUtils', () => {
 
             const connection = Onyx.connect({
                 key: ONYXKEYS.COLLECTION.ROUTES,
-                initWithStoredValues: false,
                 callback: (value) => (result = value),
                 waitForCollectionCallback: true,
             });
@@ -274,7 +271,6 @@ describe('OnyxUtils', () => {
                 key: ONYXKEYS.COLLECTION.TEST_KEY,
                 callback: collectionCallback,
                 waitForCollectionCallback: true,
-                initWithStoredValues: false,
             });
 
             await waitForPromisesToResolve();
@@ -302,9 +298,9 @@ describe('OnyxUtils', () => {
             const spy2 = jest.fn();
             const spy3 = jest.fn();
 
-            const conn1 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}1`, callback: spy1, initWithStoredValues: false});
-            const conn2 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}2`, callback: spy2, initWithStoredValues: false});
-            const conn3 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}3`, callback: spy3, initWithStoredValues: false});
+            const conn1 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}1`, callback: spy1});
+            const conn2 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}2`, callback: spy2});
+            const conn3 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}3`, callback: spy3});
             await waitForPromisesToResolve();
             spy1.mockClear();
             spy2.mockClear();
@@ -336,12 +332,10 @@ describe('OnyxUtils', () => {
                 key: ONYXKEYS.COLLECTION.TEST_KEY,
                 callback: collectionCallback,
                 waitForCollectionCallback: true,
-                initWithStoredValues: false,
             });
             const connSingle = Onyx.connect({
                 key: ONYXKEYS.TEST_KEY,
                 callback: singleKeyCallback,
-                initWithStoredValues: false,
             });
             await waitForPromisesToResolve();
             collectionCallback.mockClear();
@@ -372,13 +366,11 @@ describe('OnyxUtils', () => {
                 key: ONYXKEYS.COLLECTION.TEST_KEY,
                 callback: testCallback,
                 waitForCollectionCallback: true,
-                initWithStoredValues: false,
             });
             const connRoutes = Onyx.connect({
                 key: ONYXKEYS.COLLECTION.ROUTES,
                 callback: routesCallback,
                 waitForCollectionCallback: true,
-                initWithStoredValues: false,
             });
             await waitForPromisesToResolve();
             testCallback.mockClear();
@@ -411,8 +403,8 @@ describe('OnyxUtils', () => {
 
             const spy1 = jest.fn();
             const spy2 = jest.fn();
-            const conn1 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}1`, callback: spy1, initWithStoredValues: false});
-            const conn2 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}2`, callback: spy2, initWithStoredValues: false});
+            const conn1 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}1`, callback: spy1});
+            const conn2 = Onyx.connect({key: `${ONYXKEYS.COLLECTION.TEST_KEY}2`, callback: spy2});
             await waitForPromisesToResolve();
             spy1.mockClear();
             spy2.mockClear();
@@ -440,24 +432,16 @@ describe('OnyxUtils', () => {
             // it receives the first member. Subsequent changed members in the same batch must NOT
             // trigger further callbacks for this subscriber.
             const callback = jest.fn();
-            let connection: ReturnType<typeof Onyx.connect>;
-
-            callback.mockImplementation(() => {
-                if (!connection) {
-                    return;
-                }
-
-                Onyx.disconnect(connection);
-            });
-
-            connection = Onyx.connect({
+            const connection = Onyx.connect({
                 key: ONYXKEYS.COLLECTION.TEST_KEY,
                 callback,
                 waitForCollectionCallback: false,
-                initWithStoredValues: false,
             });
             await waitForPromisesToResolve();
-            callback.mockClear();
+            callback.mockReset();
+            callback.mockImplementation(() => {
+                Onyx.disconnect(connection);
+            });
 
             await Onyx.multiSet({
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}1`]: {id: 1},
@@ -489,12 +473,10 @@ describe('OnyxUtils', () => {
             const connA = Onyx.connect({
                 key: ONYXKEYS.TEST_KEY,
                 callback: callbackA,
-                initWithStoredValues: false,
             });
             const connB = Onyx.connect({
                 key: ONYXKEYS.TEST_KEY_2,
                 callback: callbackB,
-                initWithStoredValues: false,
             });
             await waitForPromisesToResolve();
             callbackA.mockClear();
@@ -533,7 +515,6 @@ describe('OnyxUtils', () => {
             const connection = Onyx.connect({
                 key: entryKey,
                 callback: callbackSpy,
-                initWithStoredValues: false,
             });
 
             const entryData = {value: 'updated_data'};
@@ -565,7 +546,6 @@ describe('OnyxUtils', () => {
             const connection = await Onyx.connect({
                 key: entryKey,
                 callback: callbackSpy,
-                initWithStoredValues: false,
             });
 
             // Create partial collection data that includes our member key
@@ -611,7 +591,6 @@ describe('OnyxUtils', () => {
                 key: ONYXKEYS.COLLECTION.TEST_KEY,
                 callback: collectionCallback,
                 waitForCollectionCallback: true,
-                initWithStoredValues: false,
             });
 
             await Onyx.set(entryKey, entryData);
@@ -640,7 +619,6 @@ describe('OnyxUtils', () => {
             const connection = Onyx.connect({
                 key: entryKey,
                 callback: callbackSpy,
-                initWithStoredValues: false,
             });
             await waitForPromisesToResolve();
             callbackSpy.mockClear();
@@ -668,9 +646,9 @@ describe('OnyxUtils', () => {
             const spyA = jest.fn();
             const spyB = jest.fn();
             const spyC = jest.fn();
-            const connA = Onyx.connect({key: keyA, callback: spyA, initWithStoredValues: false});
-            const connB = Onyx.connect({key: keyB, callback: spyB, initWithStoredValues: false});
-            const connC = Onyx.connect({key: keyC, callback: spyC, initWithStoredValues: false});
+            const connA = Onyx.connect({key: keyA, callback: spyA});
+            const connB = Onyx.connect({key: keyB, callback: spyB});
+            const connC = Onyx.connect({key: keyC, callback: spyC});
             await waitForPromisesToResolve();
             spyA.mockClear();
             spyB.mockClear();
@@ -700,15 +678,16 @@ describe('OnyxUtils', () => {
 
             await Onyx.set(entryKey, entryData);
 
-            const failingCallback = jest.fn(() => {
-                throw new Error('subscriber failure');
-            });
+            const failingCallback = jest.fn();
             const workingCallback = jest.fn();
 
-            const connFailing = Onyx.connect({key: entryKey, callback: failingCallback, initWithStoredValues: false});
-            const connWorking = Onyx.connect({key: entryKey, callback: workingCallback, initWithStoredValues: false});
+            const connFailing = Onyx.connect({key: entryKey, callback: failingCallback, reuseConnection: false});
+            const connWorking = Onyx.connect({key: entryKey, callback: workingCallback, reuseConnection: false});
             await waitForPromisesToResolve();
-            failingCallback.mockClear();
+            failingCallback.mockReset();
+            failingCallback.mockImplementation(() => {
+                throw new Error('subscriber failure');
+            });
             workingCallback.mockClear();
 
             // Spy on Logger to verify the error is logged
