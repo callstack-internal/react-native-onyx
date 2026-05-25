@@ -954,11 +954,12 @@ describe('OnyxUtils', () => {
         // miss it (unless the entire storageKeys set is empty, in which case the function falls back
         // to Storage.getAllKeys). To reliably hit the cold-but-persisted state regardless of how many
         // other keys remain in cache, we re-register the key as known after dropping its value.
-        const evictFromCache = (...keys: string[]) =>
-            keys.forEach((key) => {
+        const evictFromCache = (...keys: string[]) => {
+            for (const key of keys) {
                 OnyxCache.drop(key);
                 OnyxCache.addKey(key);
-            });
+            }
+        };
 
         it('fast path: skips storage reads entirely when every existing key is warm in cache', async () => {
             const collectionKey = ONYXKEYS.COLLECTION.TEST_KEY;
