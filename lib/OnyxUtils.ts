@@ -599,7 +599,7 @@ function keysChanged<TKey extends CollectionKeyBase>(
         try {
             // Collection-root subscribers always receive the whole collection snapshot.
             lastConnectionCallbackData.set(subscriber.subscriptionID, {value: cachedCollection, matchedKey: subscriber.key});
-            subscriber.callback(cachedCollection, subscriber.key, partialCollection);
+            subscriber.callback(cachedCollection, subscriber.key);
         } catch (error) {
             Logger.logAlert(`[OnyxUtils.keysChanged] Subscriber callback threw an error for key '${collectionKey}': ${error}`);
         }
@@ -692,7 +692,7 @@ function keyChanged<TKey extends OnyxKey>(
                         cachedCollections[subscriber.key] = cachedCollection;
                     }
                     lastConnectionCallbackData.set(subscriber.subscriptionID, {value: cachedCollection, matchedKey: subscriber.key});
-                    (subscriber.callback as CollectionConnectCallback<OnyxKey>)(cachedCollection, subscriber.key, {[key]: value});
+                    (subscriber.callback as CollectionConnectCallback<OnyxKey>)(cachedCollection, subscriber.key);
                     continue;
                 }
 
