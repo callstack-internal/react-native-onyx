@@ -20,10 +20,12 @@ import type {
 } from './types';
 import type {FetchStatus, ResultMetadata, UseOnyxResult, UseOnyxOptions} from './useOnyx';
 import useOnyx from './useOnyx';
+import useOnyxState from './useOnyxState';
+import type {OnyxStateView, UseOnyxStateOptions} from './useOnyxState';
 import type {OnyxSQLiteKeyValuePair} from './storage/providers/SQLiteProvider';
 
 export default Onyx;
-export {useOnyx};
+export {useOnyx, useOnyxState};
 export type {
     ConnectOptions,
     CustomTypeOptions,
@@ -43,10 +45,12 @@ export type {
     OnyxSetCollectionInput,
     OnyxUpdate,
     OnyxValue,
+    OnyxStateView,
     ResultMetadata,
     Selector,
     UseOnyxResult,
     Connection,
     UseOnyxOptions,
+    UseOnyxStateOptions,
     OnyxSQLiteKeyValuePair,
 };

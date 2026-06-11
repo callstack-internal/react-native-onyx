@@ -10,23 +10,39 @@ import type {CollectionKeyBase, KeyValueMapping, OnyxCollection, OnyxKey, OnyxVa
 type KeyListener<TKey extends OnyxKey = OnyxKey> = (value: OnyxValue<TKey>, key: TKey) => void;
 
 /**
- * `OnyxStore` is a single listener registry for Onyx reads/subscriptions. It replaces the
- * connection manager's several per-subscription bookkeeping structures with one index:
+ * Listener fired when any of a state-listener's declared dep keys changes.
+ */
+type StateListenerCallback = () => void;
+
+type StateListenerEntry = {
+    listener: StateListenerCallback;
+    deps: Set<OnyxKey>;
+};
+
+/**
+ * `OnyxStore` is the listener registry that replaces `OnyxConnectionManager`,
+ * `OnyxSnapshotCache`, and the subscriber-half of `OnyxUtils`. It owns two
+ * indexes:
  *
- *   keyListeners — listeners on an exact key (a single key, a collection root in snapshot
- *                  mode, or a specific collection member).
+ *   keyListeners       — listeners on an exact key (single key, collection root
+ *                        in snapshot mode, or a specific collection member).
+ *   stateListeners(ByDep) — listeners that re-evaluate when any of their declared
+ *                        deps change. Indexed by dep key for O(1) lookup in notify().
  *
- * Write paths call `notifyKey()` (single-key write) or `notifyCollection()` (batch collection
- * update from `mergeCollection`/`setCollection`/`clear`).
- *
- * NOTE: This module is introduced inert — nothing calls it yet. The subscription/notification
- * paths (`Onyx.connect`, `useOnyx`, `OnyxUtils.notify*`) are wired onto it in a later change.
+ * Write paths call `notifyKey()` (single key write) or `notifyCollection()`
+ * (batch collection update from `mergeCollection`/`setCollection`/`clear`).
  */
 class OnyxStore {
     private keyListeners: Map<OnyxKey, Set<KeyListener>>;
 
+    private stateListeners: Set<StateListenerEntry>;
+
+    private stateListenersByDep: Map<OnyxKey, Set<StateListenerEntry>>;
+
     constructor() {
         this.keyListeners = new Map();
+        this.stateListeners = new Set();
+        this.stateListenersByDep = new Map();
     }
 
     /**
@@ -68,12 +84,45 @@ class OnyxStore {
     }
 
     /**
+     * Subscribe to state-tree changes. The listener fires when any of the declared
+     * deps changes. Used by `useOnyxState`.
+     *
+     * Returns an unsubscribe function.
+     */
+    subscribeState(listener: StateListenerCallback, deps: readonly OnyxKey[]): () => void {
+        const entry: StateListenerEntry = {listener, deps: new Set(deps)};
+        this.stateListeners.add(entry);
+        for (const dep of entry.deps) {
+            let set = this.stateListenersByDep.get(dep);
+            if (!set) {
+                set = new Set();
+                this.stateListenersByDep.set(dep, set);
+            }
+            set.add(entry);
+        }
+        return () => {
+            this.stateListeners.delete(entry);
+            for (const dep of entry.deps) {
+                const set = this.stateListenersByDep.get(dep);
+                if (!set) {
+                    continue;
+                }
+                set.delete(entry);
+                if (set.size === 0) {
+                    this.stateListenersByDep.delete(dep);
+                }
+            }
+        };
+    }
+
+    /**
      * Notify of a single-key write.
      *
      * Dispatch:
      *   1. keyListeners.get(key) — exact-key subscribers (always fires)
      *   2. If key is a collection member: keyListeners.get(collectionKey) — snapshot
      *      subscribers for the parent collection (unless suppressed).
+     *   3. State listeners whose deps include `key` or its collection key.
      *
      * `options.suppressCollectionSnapshot` skips step 2 — used by collection-batch
      * write paths so each member-write doesn't re-trigger the collection-level
@@ -102,6 +151,13 @@ class OnyxStore {
                 }
             }
         }
+
+        // 3. State listeners
+        const fired = new Set<StateListenerEntry>();
+        this.fireStateListenersForDep(key, fired);
+        if (isCollectionMemberWrite) {
+            this.fireStateListenersForDep(collectionKey, fired);
+        }
     }
 
     /**
@@ -112,6 +168,8 @@ class OnyxStore {
      *   1. keyListeners.get(collectionKey) — fires ONCE with the new snapshot.
      *   2. keyListeners.get(memberKey) — fires per changed member where the value
      *      differs from the previous (for ref-equality on unchanged members).
+     *   3. State listeners affected by the collection key OR any changed member key,
+     *      each fired at most once.
      */
     notifyCollection<TKey extends CollectionKeyBase>(
         collectionKey: TKey,
@@ -152,11 +210,20 @@ class OnyxStore {
                 this.safeInvoke(() => listener(value as OnyxValue<OnyxKey>, memberKey), memberKey);
             }
         }
+
+        // 3. State listeners — each affected entry fires at most once.
+        const fired = new Set<StateListenerEntry>();
+        this.fireStateListenersForDep(collectionKey, fired);
+        for (const memberKey of changedKeys) {
+            this.fireStateListenersForDep(memberKey, fired);
+        }
     }
 
     /** Wipe all subscriptions. Used by tests and `Onyx.clear()` follow-on. */
     clearAll(): void {
         this.keyListeners.clear();
+        this.stateListeners.clear();
+        this.stateListenersByDep.clear();
     }
 
     /** True if there are any subscribers for the given key (exact or parent collection). */
@@ -171,6 +238,20 @@ class OnyxStore {
         return false;
     }
 
+    private fireStateListenersForDep(depKey: OnyxKey, alreadyFired: Set<StateListenerEntry>): void {
+        const set = this.stateListenersByDep.get(depKey);
+        if (!set || set.size === 0) {
+            return;
+        }
+        for (const entry of set) {
+            if (alreadyFired.has(entry)) {
+                continue;
+            }
+            alreadyFired.add(entry);
+            this.safeInvoke(entry.listener, depKey);
+        }
+    }
+
     private safeInvoke(fn: () => void, contextKey: OnyxKey): void {
         try {
             fn();
@@ -183,4 +264,4 @@ class OnyxStore {
 const onyxStore = new OnyxStore();
 
 export default onyxStore;
-export type {KeyListener};
+export type {KeyListener, StateListenerCallback};

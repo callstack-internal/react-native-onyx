@@ -9,6 +9,8 @@ import * as Logger from '../../lib/Logger';
 // and only ever `.clear()`ed (never reassigned), so capturing the references here stays valid.
 // eslint-disable-next-line dot-notation
 const keyListeners = onyxStore['keyListeners'];
+// eslint-disable-next-line dot-notation
+const stateListenersByDep = onyxStore['stateListenersByDep'];
 
 const ONYXKEYS = {
     TEST_KEY: 'test',
@@ -213,6 +215,82 @@ describe('OnyxStore', () => {
         });
     });
 
+    describe('subscribeState', () => {
+        it('should fire when a declared dep changes via notifyKey', () => {
+            const callback = jest.fn();
+            onyxStore.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
+
+            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x');
+
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it('should not fire when a non-dep key changes', () => {
+            const callback = jest.fn();
+            onyxStore.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
+
+            onyxStore.notifyKey(ONYXKEYS.OTHER_TEST, 'x');
+
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        it('should fire at most once when both a member key and its collection key are deps (notifyKey)', () => {
+            jest.spyOn(cache, 'getCollectionData').mockReturnValue({});
+            const callback = jest.fn();
+            // Depends on both the collection root AND a specific member — a member write
+            // would touch both deps, but the shared `fired` set must dedup to a single call.
+            onyxStore.subscribeState(callback, [COLLECTION, MEMBER_1]);
+
+            onyxStore.notifyKey(MEMBER_1, {id: 1});
+
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it('should fire at most once when multiple changed members are deps (notifyCollection)', () => {
+            jest.spyOn(cache, 'getCollectionData').mockReturnValue({[MEMBER_1]: {id: 1}, [MEMBER_2]: {id: 2}});
+            const callback = jest.fn();
+            onyxStore.subscribeState(callback, [MEMBER_1, MEMBER_2]);
+
+            onyxStore.notifyCollection(COLLECTION, {[MEMBER_1]: {id: 1}, [MEMBER_2]: {id: 2}});
+
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it('should stop firing after it unsubscribes', () => {
+            const callback = jest.fn();
+            const unsubscribe = onyxStore.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
+
+            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'a');
+            unsubscribe();
+            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'b');
+
+            expect(callback).toHaveBeenCalledTimes(1);
+        });
+
+        it('should clean up the by-dep index so an unsubscribed dep no longer dispatches', () => {
+            const callback1 = jest.fn();
+            const callback2 = jest.fn();
+            // Two entries share the dep; unsubscribing one must not drop the other.
+            const unsubscribe1 = onyxStore.subscribeState(callback1, [ONYXKEYS.TEST_KEY]);
+            onyxStore.subscribeState(callback2, [ONYXKEYS.TEST_KEY]);
+
+            unsubscribe1();
+            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x');
+
+            expect(callback1).not.toHaveBeenCalled();
+            expect(callback2).toHaveBeenCalledTimes(1);
+        });
+
+        it('should delete the dep entry from the internal index once the last state listener unsubscribes', () => {
+            const unsubscribe = onyxStore.subscribeState(jest.fn(), [ONYXKEYS.TEST_KEY]);
+            expect(stateListenersByDep.has(ONYXKEYS.TEST_KEY)).toBeTruthy();
+
+            unsubscribe();
+
+            expect(stateListenersByDep.has(ONYXKEYS.TEST_KEY)).toBeFalsy();
+        });
+    });
+
     describe('hasListenersForKey', () => {
         it('should return true for an exact-key subscriber', () => {
             onyxStore.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
@@ -236,14 +314,17 @@ describe('OnyxStore', () => {
     });
 
     describe('clearAll', () => {
-        it('should wipe key and collection subscriptions', () => {
+        it('should wipe key, collection, and state subscriptions', () => {
             const keyCallback = jest.fn();
+            const stateCallback = jest.fn();
             onyxStore.subscribe(ONYXKEYS.TEST_KEY, keyCallback);
+            onyxStore.subscribeState(stateCallback, [ONYXKEYS.TEST_KEY]);
 
             onyxStore.clearAll();
             onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x');
 
             expect(keyCallback).not.toHaveBeenCalled();
+            expect(stateCallback).not.toHaveBeenCalled();
             expect(onyxStore.hasListenersForKey(ONYXKEYS.TEST_KEY)).toBeFalsy();
         });
     });
