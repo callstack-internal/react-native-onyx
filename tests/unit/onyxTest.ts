@@ -711,7 +711,6 @@ describe('Onyx', () => {
                     1,
                     {test_1: {ID: 123, value: 'one'}, test_2: {ID: 234, value: 'two'}, test_3: {ID: 345, value: 'three'}},
                     ONYX_KEYS.COLLECTION.TEST_KEY,
-                    expect.anything(),
                 );
                 expect(mockCallback).toHaveBeenNthCalledWith(
                     2,
@@ -724,7 +723,6 @@ describe('Onyx', () => {
                         test_5: {ID: 567, value: 'one'},
                     },
                     ONYX_KEYS.COLLECTION.TEST_KEY,
-                    expect.anything(),
                 );
             });
     });

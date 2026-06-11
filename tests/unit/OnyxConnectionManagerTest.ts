@@ -232,7 +232,7 @@ describe('OnyxConnectionManager', () => {
 
             await act(async () => waitForPromisesToResolve());
 
-            expect(callback1).toHaveBeenCalledWith(collection, ONYXKEYS.COLLECTION.TEST_KEY, undefined);
+            expect(callback1).toHaveBeenCalledWith(collection, ONYXKEYS.COLLECTION.TEST_KEY);
 
             const callback2 = jest.fn();
             const connection2 = connectionManager.connect({key: ONYXKEYS.COLLECTION.TEST_KEY, callback: callback2});
