@@ -58,19 +58,16 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toBeUndefined();
-            expect(result.current[1].status).toEqual('loaded');
 
             // Switch to a key that has cached data
             rerender(`${ONYXKEYS.COLLECTION.TEST_KEY}2`);
 
             // Value and loaded status should be available synchronously, without waiting for promises
             expect(result.current[0]).toEqual('test_value');
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('test_value');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return the new value when switching from a key with data to another key with different data', async () => {
@@ -82,7 +79,6 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value_one');
-            expect(result.current[1].status).toEqual('loaded');
 
             // Switch to another key that also has data
             rerender(`${ONYXKEYS.COLLECTION.TEST_KEY}2`);
@@ -90,7 +86,6 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value_two');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should apply the selector against the new key data when switching keys', async () => {
@@ -104,7 +99,6 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('entry1_name');
-            expect(result.current[1].status).toEqual('loaded');
 
             // Switch key — selector should run against the new key's data
             rerender(`${ONYXKEYS.COLLECTION.TEST_KEY}2`);
@@ -112,7 +106,6 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('entry2_name');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should handle rapid key switching and settle on the final key value', async () => {
@@ -133,7 +126,6 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value_three');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should correctly switch between non-collection keys', async () => {
@@ -145,18 +137,15 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value_one');
-            expect(result.current[1].status).toEqual('loaded');
 
             rerender(ONYXKEYS.TEST_KEY_2);
 
             // Cached value should be available synchronously
             expect(result.current[0]).toEqual('value_two');
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value_two');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should correctly return to a previously used key (A → B → A round-trip)', async () => {
@@ -168,7 +157,6 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value_one');
-            expect(result.current[1].status).toEqual('loaded');
 
             // A → B
             rerender(`${ONYXKEYS.COLLECTION.TEST_KEY}2`);
@@ -176,19 +164,16 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value_two');
-            expect(result.current[1].status).toEqual('loaded');
 
             // B → A
             rerender(`${ONYXKEYS.COLLECTION.TEST_KEY}1`);
 
             // Cached value should be available synchronously
             expect(result.current[0]).toEqual('value_one');
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value_one');
-            expect(result.current[1].status).toEqual('loaded');
         });
     });
 
@@ -199,7 +184,6 @@ describe('useOnyx', () => {
             const {result} = renderHook(() => useOnyx(ONYXKEYS.TEST_KEY));
 
             expect(result.current[0]).toEqual('test');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return value from cache, and return updated value after a merge operation', async () => {
@@ -208,12 +192,10 @@ describe('useOnyx', () => {
             const {result} = renderHook(() => useOnyx(ONYXKEYS.TEST_KEY));
 
             expect(result.current[0]).toEqual('test1');
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.merge(ONYXKEYS.TEST_KEY, 'test2'));
 
             expect(result.current[0]).toEqual('test2');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return loaded state after an Onyx.clear() call while connecting and loading from cache', async () => {
@@ -225,17 +207,13 @@ describe('useOnyx', () => {
             const {result: result2} = renderHook(() => useOnyx(ONYXKEYS.TEST_KEY));
 
             expect(result1.current[0]).toBeUndefined();
-            expect(result1.current[1].status).toEqual('loaded');
             expect(result2.current[0]).toBeUndefined();
-            expect(result2.current[1].status).toEqual('loaded');
 
             Onyx.merge(ONYXKEYS.TEST_KEY, 'test2');
             await act(async () => waitForPromisesToResolve());
 
             expect(result1.current[0]).toEqual('test2');
-            expect(result1.current[1].status).toEqual('loaded');
             expect(result2.current[0]).toEqual('test2');
-            expect(result2.current[1].status).toEqual('loaded');
         });
 
         it('should not update the result when a new object with shallow-equal content is set', async () => {
@@ -300,12 +278,10 @@ describe('useOnyx', () => {
             );
 
             expect(result.current[0]).toEqual('id - test_id, name - test_name');
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.merge(ONYXKEYS.TEST_KEY, {id: 'changed_id', name: 'changed_name'}));
 
             expect(result.current[0]).toEqual('id - changed_id, name - changed_name');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return selected data from a collection key', async () => {
@@ -332,7 +308,6 @@ describe('useOnyx', () => {
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry2`]: 'entry2_id',
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry3`]: 'entry3_id',
             });
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.merge(`${ONYXKEYS.COLLECTION.TEST_KEY}entry2`, null));
 
@@ -340,7 +315,6 @@ describe('useOnyx', () => {
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry1`]: 'entry1_id',
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry3`]: 'entry3_id',
             });
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should not change selected data if a property outside that data was changed', async () => {
@@ -419,14 +393,12 @@ describe('useOnyx', () => {
             );
 
             expect(result.current[0]).toEqual('id - test_id, name - test_name');
-            expect(result.current[1].status).toEqual('loaded');
 
             selector = ((entry: OnyxEntry<{id: string; name: string}>) => `id - ${entry?.id}, name - ${entry?.name} - selector changed synchronously`) as UseOnyxSelector<OnyxKey, string>;
 
             rerender(undefined);
 
             expect(result.current[0]).toEqual('id - test_id, name - test_name - selector changed synchronously');
-            expect(result.current[1].status).toEqual('loaded');
 
             selector = ((entry: OnyxEntry<{id: string; name: string}>) => `id - ${entry?.id}, name - ${entry?.name} - selector changed after macrotask`) as UseOnyxSelector<OnyxKey, string>;
 
@@ -437,7 +409,6 @@ describe('useOnyx', () => {
             });
 
             expect(result.current[0]).toEqual('id - test_id, name - test_name - selector changed after macrotask');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should memoize selector output and return same reference when input unchanged', async () => {
@@ -730,7 +701,6 @@ describe('useOnyx', () => {
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry2`]: 'entry2_id_ex1',
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry3`]: 'entry3_id_ex1',
             });
-            expect(result.current[1].status).toEqual('loaded');
 
             externalValue = 'ex2';
 
@@ -743,7 +713,6 @@ describe('useOnyx', () => {
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry2`]: 'entry2_id_ex2',
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry3`]: 'entry3_id_ex2',
             });
-            expect(result.current[1].status).toEqual('loaded');
         });
     });
 
@@ -763,7 +732,6 @@ describe('useOnyx', () => {
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry1`]: {id: 'entry1_id', name: 'entry1_name'},
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry2`]: {id: 'entry2_id', name: 'entry2_name'},
             });
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () =>
                 Onyx.mergeCollection(ONYXKEYS.COLLECTION.TEST_KEY, {
@@ -777,7 +745,6 @@ describe('useOnyx', () => {
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry1`]: {id: 'entry1_id', name: 'entry1_name_changed'},
                 [`${ONYXKEYS.COLLECTION.TEST_KEY}entry2`]: {id: 'entry2_id', name: 'entry2_name_changed'},
             });
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should always return undefined when subscribing to a skippable collection member id', async () => {
@@ -788,12 +755,10 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toBeUndefined();
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.merge(`${ONYXKEYS.COLLECTION.TEST_KEY}skippable-id`, 'skippable-id_value_changed'));
 
             expect(result.current[0]).toBeUndefined();
-            expect(result.current[1].status).toEqual('loaded');
         });
     });
 
@@ -806,7 +771,6 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toBeUndefined();
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return value and loaded state after setting a RAM-only key', async () => {
@@ -815,12 +779,10 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toBeUndefined();
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.set(ONYXKEYS.RAM_ONLY_KEY, 'fresh_value'));
 
             expect(result.current[0]).toEqual('fresh_value');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return updated value after merge on a RAM-only key', async () => {
@@ -831,12 +793,10 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual({name: 'test'});
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.merge(ONYXKEYS.RAM_ONLY_KEY, {age: 25}));
 
             expect(result.current[0]).toEqual({name: 'test', age: 25});
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return collection data from cache for a RAM-only collection key', async () => {
@@ -855,7 +815,6 @@ describe('useOnyx', () => {
                 [`${ONYXKEYS.COLLECTION.RAM_ONLY_COLLECTION}entry1`]: {id: '1'},
                 [`${ONYXKEYS.COLLECTION.RAM_ONLY_COLLECTION}entry2`]: {id: '2'},
             });
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return value for a RAM-only collection member after set', async () => {
@@ -864,12 +823,10 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toBeUndefined();
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.set(`${ONYXKEYS.COLLECTION.RAM_ONLY_COLLECTION}entry1`, {id: 'fresh'}));
 
             expect(result.current[0]).toEqual({id: 'fresh'});
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should work with selector on a RAM-only key', async () => {
@@ -884,12 +841,10 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('test_id');
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.merge(ONYXKEYS.RAM_ONLY_KEY, {id: 'changed_id'}));
 
             expect(result.current[0]).toEqual('changed_id');
-            expect(result.current[1].status).toEqual('loaded');
         });
 
         it('should return `undefined` after clearing a RAM-only key', async () => {
@@ -900,12 +855,10 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('value');
-            expect(result.current[1].status).toEqual('loaded');
 
             await act(async () => Onyx.clear());
 
             expect(result.current[0]).toBeUndefined();
-            expect(result.current[1].status).toEqual('loaded');
         });
     });
 
@@ -926,7 +879,6 @@ describe('useOnyx', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(result.current[0]).toEqual('cached_value');
-            expect(result.current[1].status).toEqual('loaded');
             // A single render — no extra render caused by subscribe resetting state on initial mount.
             expect(renderCount).toBe(1);
         });

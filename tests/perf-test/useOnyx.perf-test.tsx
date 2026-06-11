@@ -2,7 +2,7 @@ import {screen} from '@testing-library/react-native';
 import React from 'react';
 import {Text, View} from 'react-native';
 import {measureRenders} from 'reassure';
-import type {FetchStatus, OnyxEntry, OnyxKey, OnyxValue, ResultMetadata, UseOnyxOptions} from '../../lib';
+import type {OnyxEntry, OnyxKey, OnyxValue, UseOnyxOptions} from '../../lib';
 import Onyx, {useOnyx} from '../../lib';
 import type {UseOnyxSelector} from '../../lib/useOnyx';
 
@@ -14,19 +14,16 @@ const ONYXKEYS = {
 };
 
 const dataMatcher = (onyxKey: OnyxKey, expected: unknown) => `data: ${onyxKey}_${JSON.stringify(expected)}`;
-const metadataStatusMatcher = (onyxKey: OnyxKey, expected: FetchStatus) => `metadata.status: ${onyxKey}_${expected}`;
 
 type UseOnyxMatcherProps = {
     onyxKey: OnyxKey;
     data: OnyxValue<OnyxKey>;
-    metadata: ResultMetadata;
 };
 
-function UseOnyxMatcher({onyxKey, data, metadata}: UseOnyxMatcherProps) {
+function UseOnyxMatcher({onyxKey, data}: UseOnyxMatcherProps) {
     return (
         <View>
             <Text>{dataMatcher(onyxKey, data)}</Text>
-            <Text>{metadataStatusMatcher(onyxKey, metadata.status)}</Text>
         </View>
     );
 }
@@ -37,13 +34,12 @@ type UseOnyxWrapperProps = {
 };
 
 function UseOnyxWrapper({onyxKey, onyxOptions}: UseOnyxWrapperProps) {
-    const [data, metadata] = useOnyx(onyxKey, onyxOptions);
+    const [data] = useOnyx(onyxKey, onyxOptions);
 
     return (
         <UseOnyxMatcher
             onyxKey={onyxKey}
             data={data}
-            metadata={metadata}
         />
     );
 }
@@ -73,7 +69,6 @@ describe('useOnyx', () => {
             await measureRenders(<UseOnyxWrapper onyxKey={key} />, {
                 scenario: async () => {
                     await screen.findByText(dataMatcher(key, undefined));
-                    await screen.findByText(metadataStatusMatcher(key, 'loaded'));
                 },
                 afterEach: clearOnyxAfterEachMeasure,
             });
@@ -90,7 +85,6 @@ describe('useOnyx', () => {
                 },
                 scenario: async () => {
                     await screen.findByText(dataMatcher(key, 'test'));
-                    await screen.findByText(metadataStatusMatcher(key, 'loaded'));
                 },
                 afterEach: clearOnyxAfterEachMeasure,
             });
@@ -109,7 +103,6 @@ describe('useOnyx', () => {
                 },
                 scenario: async () => {
                     await screen.findByText(dataMatcher(key, 'test3'));
-                    await screen.findByText(metadataStatusMatcher(key, 'loaded'));
                 },
                 afterEach: clearOnyxAfterEachMeasure,
             });
@@ -135,12 +128,10 @@ describe('useOnyx', () => {
                     },
                     scenario: async () => {
                         await screen.findByText(dataMatcher(key, 'test_name_changed'));
-                        await screen.findByText(metadataStatusMatcher(key, 'loaded'));
 
                         Onyx.merge(key, {id: 'test_id'});
 
                         await screen.findByText(dataMatcher(key, 'test_name_changed'));
-                        await screen.findByText(metadataStatusMatcher(key, 'loaded'));
                     },
                     afterEach: clearOnyxAfterEachMeasure,
                 },
@@ -165,12 +156,10 @@ describe('useOnyx', () => {
                     },
                     scenario: async () => {
                         await screen.findByText(dataMatcher(key, 'test_name_changed'));
-                        await screen.findByText(metadataStatusMatcher(key, 'loaded'));
 
                         Onyx.merge(key, {name: 'test_name2'});
 
                         await screen.findByText(dataMatcher(key, 'test_name2_changed'));
-                        await screen.findByText(metadataStatusMatcher(key, 'loaded'));
                     },
                     afterEach: clearOnyxAfterEachMeasure,
                 },
@@ -184,26 +173,23 @@ describe('useOnyx', () => {
          */
         test('3 calls loading from cache', async () => {
             function TestComponent() {
-                const [testKeyData, testKeyMetadata] = useOnyx(ONYXKEYS.TEST_KEY);
-                const [testKey2Data, testKey2Metadata] = useOnyx(ONYXKEYS.TEST_KEY_2);
-                const [testKey3Data, testKey3Metadata] = useOnyx(ONYXKEYS.TEST_KEY_3);
+                const [testKeyData] = useOnyx(ONYXKEYS.TEST_KEY);
+                const [testKey2Data] = useOnyx(ONYXKEYS.TEST_KEY_2);
+                const [testKey3Data] = useOnyx(ONYXKEYS.TEST_KEY_3);
 
                 return (
                     <View>
                         <UseOnyxMatcher
                             onyxKey={ONYXKEYS.TEST_KEY}
                             data={testKeyData}
-                            metadata={testKeyMetadata}
                         />
                         <UseOnyxMatcher
                             onyxKey={ONYXKEYS.TEST_KEY_2}
                             data={testKey2Data}
-                            metadata={testKey2Metadata}
                         />
                         <UseOnyxMatcher
                             onyxKey={ONYXKEYS.TEST_KEY_3}
                             data={testKey3Data}
-                            metadata={testKey3Metadata}
                         />
                     </View>
                 );
@@ -217,11 +203,8 @@ describe('useOnyx', () => {
                 },
                 scenario: async () => {
                     await screen.findByText(dataMatcher(ONYXKEYS.TEST_KEY, 'test'));
-                    await screen.findByText(metadataStatusMatcher(ONYXKEYS.TEST_KEY, 'loaded'));
                     await screen.findByText(dataMatcher(ONYXKEYS.TEST_KEY_2, 'test2'));
-                    await screen.findByText(metadataStatusMatcher(ONYXKEYS.TEST_KEY_2, 'loaded'));
                     await screen.findByText(dataMatcher(ONYXKEYS.TEST_KEY_3, 'test3'));
-                    await screen.findByText(metadataStatusMatcher(ONYXKEYS.TEST_KEY_3, 'loaded'));
                 },
                 afterEach: clearOnyxAfterEachMeasure,
             });
@@ -232,26 +215,23 @@ describe('useOnyx', () => {
          */
         test('3 calls loading from cache + merges', async () => {
             function TestComponent() {
-                const [testKeyData, testKeyMetadata] = useOnyx(ONYXKEYS.TEST_KEY);
-                const [testKey2Data, testKey2Metadata] = useOnyx(ONYXKEYS.TEST_KEY_2);
-                const [testKey3Data, testKey3Metadata] = useOnyx(ONYXKEYS.TEST_KEY_3);
+                const [testKeyData] = useOnyx(ONYXKEYS.TEST_KEY);
+                const [testKey2Data] = useOnyx(ONYXKEYS.TEST_KEY_2);
+                const [testKey3Data] = useOnyx(ONYXKEYS.TEST_KEY_3);
 
                 return (
                     <View>
                         <UseOnyxMatcher
                             onyxKey={ONYXKEYS.TEST_KEY}
                             data={testKeyData}
-                            metadata={testKeyMetadata}
                         />
                         <UseOnyxMatcher
                             onyxKey={ONYXKEYS.TEST_KEY_2}
                             data={testKey2Data}
-                            metadata={testKey2Metadata}
                         />
                         <UseOnyxMatcher
                             onyxKey={ONYXKEYS.TEST_KEY_3}
                             data={testKey3Data}
-                            metadata={testKey3Metadata}
                         />
                     </View>
                 );
@@ -265,11 +245,8 @@ describe('useOnyx', () => {
                 },
                 scenario: async () => {
                     await screen.findByText(dataMatcher(ONYXKEYS.TEST_KEY, 'test'));
-                    await screen.findByText(metadataStatusMatcher(ONYXKEYS.TEST_KEY, 'loaded'));
                     await screen.findByText(dataMatcher(ONYXKEYS.TEST_KEY_2, 'test2'));
-                    await screen.findByText(metadataStatusMatcher(ONYXKEYS.TEST_KEY_2, 'loaded'));
                     await screen.findByText(dataMatcher(ONYXKEYS.TEST_KEY_3, 'test3'));
-                    await screen.findByText(metadataStatusMatcher(ONYXKEYS.TEST_KEY_3, 'loaded'));
 
                     Onyx.merge(ONYXKEYS.TEST_KEY, 'test_changed');
                     Onyx.merge(ONYXKEYS.TEST_KEY_2, 'test2_changed');

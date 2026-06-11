@@ -16,28 +16,25 @@ type UseOnyxOptions<TKey extends OnyxKey, TReturnValue> = {
 };
 
 /**
- * Always `'loaded'` in the store-based design. The type is preserved so existing
- * destructures like `const [val, {status}] = useOnyx(KEY)` keep compiling. Will be
- * removed in a future cleanup once consumers stop reading it.
+ * The second tuple element of `useOnyx`'s result. With eager-load + the structural-sharing
+ * cache there is no pending/loading phase, so there is no status to report — it is an empty
+ * object. It's retained only to preserve the `[value, metadata]` tuple shape that consumers
+ * destructure.
  */
-type FetchStatus = 'loading' | 'loaded';
-
-type ResultMetadata = {
-    status: FetchStatus;
-};
+type ResultMetadata = Record<string, never>;
 
 type UseOnyxResult<TValue> = [NonNullable<TValue> | undefined, ResultMetadata];
 
-const LOADED_METADATA: ResultMetadata = {status: 'loaded'};
+const EMPTY_METADATA: ResultMetadata = {};
 
 /**
  * Subscribes a React component to an Onyx key. The component re-renders when the value
  * at `key` changes (for collection keys, when any member changes — the returned value is
  * the frozen collection snapshot).
  *
- * Returns `[value, {status: 'loaded'}]`. With eager-load + the structural-sharing cache,
- * there's no loading phase — the cache always has an answer (a value or "absent"). The
- * `status` field is retained for API compatibility and is always `'loaded'`.
+ * Returns `[value, {}]`. With eager-load + the structural-sharing cache there's no loading
+ * phase — the cache always has an answer (a value or "absent") — so the metadata carries no
+ * status and is an empty object.
  */
 function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey, options?: UseOnyxOptions<TKey, TReturnValue>): UseOnyxResult<TReturnValue> {
     const selector = options?.selector;
@@ -51,7 +48,7 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey
 
     // resultRef holds the last tuple returned to React. We return the same tuple reference
     // when value hasn't changed so React skips the re-render.
-    const resultRef = useRef<UseOnyxResult<TReturnValue>>([undefined, LOADED_METADATA]);
+    const resultRef = useRef<UseOnyxResult<TReturnValue>>([undefined, EMPTY_METADATA]);
 
     const getSnapshot = useCallback((): UseOnyxResult<TReturnValue> => {
         const raw = onyxStore.getState(key);
@@ -61,7 +58,7 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey
         if (resultRef.current[0] === nextValue) {
             return resultRef.current;
         }
-        resultRef.current = [nextValue, LOADED_METADATA];
+        resultRef.current = [nextValue, EMPTY_METADATA];
         return resultRef.current;
     }, [key, memoizedSelector]);
 
@@ -70,4 +67,4 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey
 
 export default useOnyx;
 
-export type {FetchStatus, ResultMetadata, UseOnyxResult, UseOnyxOptions, UseOnyxSelector};
+export type {ResultMetadata, UseOnyxResult, UseOnyxOptions, UseOnyxSelector};

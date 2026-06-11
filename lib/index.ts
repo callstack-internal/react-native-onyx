@@ -18,7 +18,7 @@ import type {
     OnyxMergeCollectionInput,
     OnyxSetCollectionInput,
 } from './types';
-import type {FetchStatus, ResultMetadata, UseOnyxResult, UseOnyxOptions} from './useOnyx';
+import type {ResultMetadata, UseOnyxResult, UseOnyxOptions} from './useOnyx';
 import useOnyx from './useOnyx';
 import type {OnyxSQLiteKeyValuePair} from './storage/providers/SQLiteProvider';
 
@@ -27,7 +27,6 @@ export {useOnyx};
 export type {
     ConnectOptions,
     CustomTypeOptions,
-    FetchStatus,
     KeyValueMapping,
     NullishDeep,
     OnyxCollection,
