@@ -209,16 +209,6 @@ type NullishObjectDeep<ObjectType extends object> = {
  */
 type Collection<TKey extends CollectionKeyBase, TValue> = Record<`${TKey}${string}`, TValue>;
 
-/** Represents the base options used in `Onyx.connect()` method. */
-// NOTE: Any changes to this type like adding or removing options must be accounted in OnyxConnectionManager's `generateConnectionID()` method!
-type BaseConnectOptions = {
-    /**
-     * If set to `false`, the connection won't be reused between other subscribers that are listening to the same Onyx key
-     * with the same connect configurations.
-     */
-    reuseConnection?: boolean;
-};
-
 /** Represents the callback function used in `Onyx.connect()` method with a regular key. */
 type DefaultConnectCallback<TKey extends OnyxKey> = (value: OnyxEntry<KeyValueMapping[TKey]>, key: TKey) => void;
 
@@ -234,21 +224,24 @@ type CollectionConnectCallback<TKey extends OnyxKey> = (value: NonUndefined<Onyx
  * that key (signature `(value, key)`).
  *
  * The legacy `waitForCollectionCallback` flag has been removed — collection-root
- * subscriptions always deliver snapshots. Per-member dispatch (the old default
- * for collection-root subscribers) is no longer supported; consumers that need
- * per-member processing should subscribe to a single collection member key.
+ * subscriptions always deliver snapshots. Per-member dispatch (the old default)
+ * is no longer supported; consumers that need per-member processing should
+ * subscribe to the snapshot and diff against the previous value (structural
+ * sharing makes the per-member ref-check O(1)).
  */
-// NOTE: Any changes to this type like adding or removing options must be accounted in OnyxConnectionManager's `generateConnectionID()` method!
-type ConnectOptions<TKey extends OnyxKey> = BaseConnectOptions & {
+type ConnectOptions<TKey extends OnyxKey> = {
     /** The Onyx key to subscribe to. */
     key: TKey;
 
-    /** A function that will be called when the Onyx data we are subscribed changes. */
-    callback?: TKey extends CollectionKeyBase ? CollectionConnectCallback<TKey> : DefaultConnectCallback<TKey>;
-};
-
-type CallbackToStateMapping<TKey extends OnyxKey> = ConnectOptions<TKey> & {
-    subscriptionID: number;
+    /**
+     * A function that will be called when the Onyx data we are subscribed changes.
+     *
+     * The value is a conditional *parameter* (collection snapshot vs. entry) inside a single
+     * function type — rather than a union of two distinct callback types — so that callers using a
+     * generic or union `TKey` still get an assignable, non-`any` callback. Collection snapshots stay
+     * `NonUndefined`.
+     */
+    callback?: (value: TKey extends CollectionKeyBase ? NonUndefined<OnyxCollection<KeyValueMapping[TKey]>> : OnyxEntry<KeyValueMapping[TKey]>, key: TKey) => void;
 };
 
 /**
@@ -347,7 +340,6 @@ type MergeCollectionWithPatchesParams<TKey extends CollectionKeyBase> = {
     collectionKey: TKey;
     collection: OnyxMergeCollectionInput<TKey>;
     mergeReplaceNullPatches?: MultiMergeReplaceNullPatches;
-    isProcessingCollectionUpdate?: boolean;
 };
 
 type RetriableOnyxOperation =
@@ -427,7 +419,6 @@ type MixedOperationsQueue = {
 };
 
 export type {
-    BaseConnectOptions,
     Collection,
     CollectionConnectCallback,
     CollectionKey,
@@ -441,7 +432,6 @@ export type {
     InitOptions,
     Key,
     KeyValueMapping,
-    CallbackToStateMapping,
     NonNull,
     NonUndefined,
     OnyxInputKeyValueMapping,
