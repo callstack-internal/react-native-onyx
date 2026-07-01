@@ -27,6 +27,33 @@
  * intentionally do NOT model: the `NVP_PREFERRED_LOCALE` locale special-case, the `areAllConnectionsSet`
  * init gate (steady-state only here — we reset the counter after mount), or the fast-path logic inside a
  * real `compute`.
+ *
+ * RESULTS:
+ *
+ * ┌──────────────────────────────────────────┬────────────────────────────────────┬──────────────────────────────────────────────────────────────┐
+ * │ Scenario                                 │ Result                             │ Meaning                                                      │
+ * ├──────────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+ * │ Normal component reading all 4 keys via  │ 1 render                           │ React 18 already batches multi-key updates — the multi-      │
+ * │ useOnyx                                  │                                    │ render problem does NOT hit ordinary subscribers.            │
+ * ├──────────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+ * │ OnyxDerived-style value, no coalescing   │ 4 recomputes, consumer renders     │ The real cost is the computes (thread-blocking), not renders │
+ * │ (current prod)                           │ once                               │ — they run in connection callbacks outside React's render    │
+ * │                                          │                                    │ cycle, where batching can't reach them.                      │
+ * ├──────────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+ * │ + Proposal (setTimeout(0) + sourceValues │ 1 recompute, compute still gets    │ Collapses N->1 AND preserves fast-path hints. Cost: the      │
+ * │ accumulation)                            │ sourceValues for all 4 deps        │ accumulation bookkeeping.                                    │
+ * ├──────────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+ * │ + Option A (setTimeout(0) + pending-     │ 1 recompute, sourceValues =        │ Collapses N->1 but LOSES the fast-path hint (simpler,        │
+ * │ flush flag)                              │ undefined, dependencyValues        │ though).                                                     │
+ * │                                          │ complete                           │                                                              │
+ * ├──────────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+ * │ + Option A with getCollectionDelta       │ 1 recompute, precise changed       │ Collapses N->1 AND recovers the fast-path hint by diffing    │
+ * │                                          │ member recovered (report_1,        │ current-vs-last-flush at flush time — A's simplicity + the   │
+ * │                                          │ excludes untouched report_2), no   │ proposal's info.                                             │
+ * │                                          │ accumulation                       │                                                              │
+ * └──────────────────────────────────────────┴────────────────────────────────────┴──────────────────────────────────────────────────────────────┘ *
+ *
+ * **All three coalescing variants collapse N→1.** So the design question is *not* whether to coalesce or where (derived layer — settled), it's purely **how to feed `compute` the change hint**: accumulate `sourceValues` (proposal), drop it (option A), or reconstruct it via `getCollectionDelta` (option A + delta). All keep `dependencyValues` fully populated at flush, which is why one coalesced compute is correct.
  */
 import {act, renderHook} from '@testing-library/react-native';
 import Onyx, {useOnyx} from '../../lib';
@@ -238,7 +265,11 @@ describe('compound Onyx.update — real useOnyx / OnyxDerived conditions', () =>
         });
 
         // eslint-disable-next-line no-console
-        console.log(`\n[proposal: setTimeout + sourceValues] recomputes: ${computeCount}, sourceValues keys: ${lastSourceValues ? Object.keys(lastSourceValues).join(',') : 'undefined'}, all deps present: ${allDepsPresentAtCompute}\n`);
+        console.log(
+            `\n[proposal: setTimeout + sourceValues] recomputes: ${computeCount}, sourceValues keys: ${
+                lastSourceValues ? Object.keys(lastSourceValues).join(',') : 'undefined'
+            }, all deps present: ${allDepsPresentAtCompute}\n`,
+        );
         expect(computeCount).toBe(1);
         // compute still receives an accumulated partial for every changed dependency — fast-paths keep working.
         expect(lastSourceValues && Object.keys(lastSourceValues).sort()).toEqual([...DEPS].sort());
@@ -385,7 +416,11 @@ describe('compound Onyx.update — real useOnyx / OnyxDerived conditions', () =>
 
         const reportDelta = lastSourceValues?.[ONYXKEYS.COLLECTION.REPORT] as Record<string, unknown> | undefined;
         // eslint-disable-next-line no-console
-        console.log(`\n[option A + getCollectionDelta] recomputes: ${computeCount}, report delta keys: ${reportDelta ? Object.keys(reportDelta).join(',') : 'undefined'}, all deps present: ${allDepsPresentAtCompute}\n`);
+        console.log(
+            `\n[option A + getCollectionDelta] recomputes: ${computeCount}, report delta keys: ${
+                reportDelta ? Object.keys(reportDelta).join(',') : 'undefined'
+            }, all deps present: ${allDepsPresentAtCompute}\n`,
+        );
         expect(computeCount).toBe(1);
         // Recovered the precise changed member (report_1) WITHOUT sourceValues accumulation...
         expect(reportDelta?.[`${ONYXKEYS.COLLECTION.REPORT}1`]).toBeDefined();
