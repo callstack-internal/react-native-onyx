@@ -36,9 +36,12 @@
  * │ Normal component reading all 4 keys via  │ 1 render                           │ React 18 already batches multi-key updates — the multi-      │
  * │ useOnyx                                  │                                    │ render problem does NOT hit ordinary subscribers.            │
  * ├──────────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+ * │ In-component derivation (useOnyx x 4 +   │ 1 compute                          │ Counterfactual to OnyxDerived: derive inside render and      │
+ * │ useMemo)                                 │                                    │ React batches it to one compute.                             │
+ * ├──────────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
  * │ OnyxDerived-style value, no coalescing   │ 4 recomputes, consumer renders     │ The real cost is the computes (thread-blocking), not renders │
  * │ (current prod)                           │ once                               │ — they run in connection callbacks outside React's render    │
- * │                                          │                                    │ cycle, where batching can't reach them.                      │
+ * │                                          │                                    │ cycle, where batching can't reach them. Contrast the 1 above.│
  * ├──────────────────────────────────────────┼────────────────────────────────────┼──────────────────────────────────────────────────────────────┤
  * │ + Proposal (setTimeout(0) + sourceValues │ 1 recompute, compute still gets    │ Collapses N->1 AND preserves fast-path hints. Cost: the      │
  * │ accumulation)                            │ sourceValues for all 4 deps        │ accumulation bookkeeping.                                    │
@@ -51,10 +54,11 @@
  * │                                          │ member recovered (report_1,        │ current-vs-last-flush at flush time — A's simplicity + the   │
  * │                                          │ excludes untouched report_2), no   │ proposal's info.                                             │
  * │                                          │ accumulation                       │                                                              │
- * └──────────────────────────────────────────┴────────────────────────────────────┴──────────────────────────────────────────────────────────────┘ *
+ * └──────────────────────────────────────────┴────────────────────────────────────┴──────────────────────────────────────────────────────────────┘
  *
  * **All three coalescing variants collapse N→1.** So the design question is *not* whether to coalesce or where (derived layer — settled), it's purely **how to feed `compute` the change hint**: accumulate `sourceValues` (proposal), drop it (option A), or reconstruct it via `getCollectionDelta` (option A + delta). All keep `dependencyValues` fully populated at flush, which is why one coalesced compute is correct.
  */
+import {useMemo} from 'react';
 import {act, renderHook} from '@testing-library/react-native';
 import Onyx, {useOnyx} from '../../lib';
 import type {Connection} from '../../lib/OnyxConnectionManager';
@@ -161,6 +165,40 @@ describe('compound Onyx.update — real useOnyx / OnyxDerived conditions', () =>
         // eslint-disable-next-line no-console
         console.log(`\n[normal subscriber] renders caused by one compound Onyx.update (4 keys): ${rendersFromUpdate}\n`);
         expect(rendersFromUpdate).toBe(1);
+    });
+
+    // The counterfactual to OnyxDerived: derive the value INSIDE a component (useOnyx × N + useMemo)
+    // instead of outside React. Because React batches the compound update to one render (test above),
+    // the useMemo recomputes ONCE — proving "even without derived values you'd get N recomputes" is false.
+    it('computes an in-component derived value (useOnyx × N + useMemo) only ONCE for a compound Onyx.update', async () => {
+        await seed();
+
+        let computeCount = 0;
+        renderHook(() => {
+            const [report] = useOnyx(ONYXKEYS.COLLECTION.REPORT);
+            const [transaction] = useOnyx(ONYXKEYS.COLLECTION.TRANSACTION);
+            const [session] = useOnyx(ONYXKEYS.SESSION);
+            const [locale] = useOnyx(ONYXKEYS.PREFERRED_LOCALE);
+            // In-render derivation — the "compute" React can batch, unlike OnyxDerived's out-of-render callbacks.
+            useMemo(() => {
+                computeCount += 1;
+                return {report, transaction, session, locale};
+            }, [report, transaction, session, locale]);
+        });
+
+        // Settle mount + loading recomputes, then count only what the update causes.
+        await act(async () => waitForPromisesToResolve());
+        computeCount = 0;
+
+        await act(async () => {
+            Onyx.update(buildCompoundUpdate(1));
+            await waitForPromisesToResolve();
+        });
+
+        // eslint-disable-next-line no-console
+        console.log(`\n[in-component useMemo] computes for one compound Onyx.update: ${computeCount}\n`);
+        // One batched render → one useMemo recompute. Contrast with the OnyxDerived case below (4).
+        expect(computeCount).toBe(1);
     });
 
     it('recomputes an OnyxDerived-style value ONCE PER CHANGED DEPENDENCY (the problem)', async () => {
