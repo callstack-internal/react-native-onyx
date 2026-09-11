@@ -4,9 +4,9 @@ import {useSyncExternalStoreWithSelector} from 'use-sync-external-store/with-sel
 
 import type {OnyxKey, OnyxValue} from './types';
 
-import cache from './OnyxCache';
+import cache, {TASK} from './OnyxCache';
+import OnyxKeys from './OnyxKeys';
 import onyxSubscriptionManager from './OnyxSubscriptionManager';
-import OnyxUtils from './OnyxUtils';
 
 type UseOnyxSelector<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>> = (data: OnyxValue<TKey> | undefined) => TReturnValue;
 
@@ -52,18 +52,18 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey
     const value = useSyncExternalStoreWithSelector<OnyxValue<TKey> | undefined, TReturnValue | undefined>(subscribe, getSnapshot, undefined, select, isEqual);
 
     // Reactive cache presence, so the first value landing re-renders even when the selector output is unchanged.
-    const isCached = useSyncExternalStore(subscribe, () => cache.hasCacheForKey(key));
+    const isCached = useSyncExternalStore(subscribe, () => (OnyxKeys.isCollectionKey(key) ? cache.getCollectionData(key) !== undefined : cache.hasCacheForKey(key)));
 
-    // Loading only on a key's first render when a merge is in flight and nothing is cached yet.
+    // Loading on the first render for an uncached key; a pending `Onyx.clear()` counts as cached (empty).
     // eslint-disable-next-line react-hooks/refs
-    const isLoading = connectedKeyRef.current !== key && !isCached && OnyxUtils.hasPendingMergeForKey(key);
+    const isLoading = connectedKeyRef.current !== key && !cache.hasPendingTask(TASK.CLEAR) && !isCached;
     const loadingStatus: FetchStatus = isLoading ? 'loading' : 'loaded';
 
     useEffect(() => {
         connectedKeyRef.current = key;
     }, [key]);
 
-    // Blank the value while loading: the pending merge isn't in cache yet.
+    // Blank the value while loading: it isn't in cache yet.
     const result = isLoading ? undefined : (value as NonNullable<TReturnValue> | undefined);
 
     return useMemo<UseOnyxResult<TReturnValue>>(() => [result, {status: loadingStatus}], [result, loadingStatus]);

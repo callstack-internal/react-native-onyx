@@ -2,7 +2,9 @@ import type {OnyxKey} from '../../lib';
 import Onyx from '../../lib';
 import onyxSubscriptionManager from '../../lib/OnyxSubscriptionManager';
 import cache from '../../lib/OnyxCache';
+import OnyxUtils from '../../lib/OnyxUtils';
 import * as Logger from '../../lib/Logger';
+import waitForPromisesToResolve from '../utils/waitForPromisesToResolve';
 
 // We need access to some internal properties of `onyxSubscriptionManager` during the tests but they are private,
 // so this workaround allows us to have access to them. The maps are created once in the constructor
@@ -311,6 +313,133 @@ describe('OnyxSubscriptionManager', () => {
             // Now unsubscribed, it does not fire again.
             onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'second');
             expect(siblingCallback).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('hydrateFromStorage / isHydrating', () => {
+        it('should hydrate an uncached single key from storage and notify the listener with the value', async () => {
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValue(false);
+            const getSpy = jest.spyOn(OnyxUtils, 'get').mockResolvedValue('stored' as never);
+
+            const callback = jest.fn();
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback);
+
+            await waitForPromisesToResolve();
+
+            expect(getSpy).toHaveBeenCalledWith(ONYXKEYS.TEST_KEY);
+            expect(callback).toHaveBeenCalledWith('stored', ONYXKEYS.TEST_KEY);
+        });
+
+        it('should not read storage for a key that is already cached', async () => {
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValue(true);
+            const getSpy = jest.spyOn(OnyxUtils, 'get');
+
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+
+            await waitForPromisesToResolve();
+
+            expect(getSpy).not.toHaveBeenCalled();
+            expect(onyxSubscriptionManager.isHydrating(ONYXKEYS.TEST_KEY)).toBeFalsy();
+        });
+
+        it('should mark the key nullish and notify undefined on a storage miss', async () => {
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValue(false);
+            jest.spyOn(OnyxUtils, 'get').mockResolvedValue(undefined as never);
+            const addNullishSpy = jest.spyOn(cache, 'addNullishStorageKey');
+
+            const callback = jest.fn();
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback);
+
+            await waitForPromisesToResolve();
+
+            expect(addNullishSpy).toHaveBeenCalledWith(ONYXKEYS.TEST_KEY);
+            expect(callback).toHaveBeenCalledWith(undefined, ONYXKEYS.TEST_KEY);
+        });
+
+        it('should report isHydrating while a read is in flight and clear it once it resolves', async () => {
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValue(false);
+            jest.spyOn(OnyxUtils, 'get').mockResolvedValue('v' as never);
+
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+            expect(onyxSubscriptionManager.isHydrating(ONYXKEYS.TEST_KEY)).toBeTruthy();
+
+            await waitForPromisesToResolve();
+
+            expect(onyxSubscriptionManager.isHydrating(ONYXKEYS.TEST_KEY)).toBeFalsy();
+        });
+
+        it('should read storage only once when multiple listeners subscribe to the same uncached key', async () => {
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValue(false);
+            const getSpy = jest.spyOn(OnyxUtils, 'get').mockResolvedValue('v' as never);
+
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+
+            await waitForPromisesToResolve();
+
+            expect(getSpy).toHaveBeenCalledTimes(1);
+        });
+
+        it('should skip hydration if the key became cached by the time writes settle', async () => {
+            // First call (the entry guard) reports uncached; by the time writes settle it is cached.
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValueOnce(false).mockReturnValue(true);
+            const getSpy = jest.spyOn(OnyxUtils, 'get');
+
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+
+            await waitForPromisesToResolve();
+
+            expect(getSpy).not.toHaveBeenCalled();
+        });
+
+        it('should hydrate a collection from its members and notify the collection listener', async () => {
+            const merged = {[MEMBER_1]: {id: 1}, [MEMBER_2]: {id: 2}};
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValue(false);
+            jest.spyOn(cache, 'getAllKeys').mockReturnValue(new Set([MEMBER_1, MEMBER_2]));
+            jest.spyOn(OnyxUtils, 'multiGet').mockResolvedValue(
+                new Map([
+                    [MEMBER_1, {id: 1}],
+                    [MEMBER_2, {id: 2}],
+                ]) as never,
+            );
+            jest.spyOn(cache, 'getCollectionData').mockReturnValue(merged);
+
+            const callback = jest.fn();
+            onyxSubscriptionManager.subscribe(COLLECTION, callback);
+
+            await waitForPromisesToResolve();
+
+            expect(callback).toHaveBeenCalledWith(merged, COLLECTION);
+        });
+
+        it('should not notify when a cold collection has no members in storage', async () => {
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValue(false);
+            jest.spyOn(cache, 'getAllKeys').mockReturnValue(new Set());
+            jest.spyOn(OnyxUtils, 'multiGet').mockResolvedValue(new Map() as never);
+
+            const callback = jest.fn();
+            onyxSubscriptionManager.subscribe(COLLECTION, callback);
+
+            await waitForPromisesToResolve();
+
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        it('should clear in-flight hydration state on clearAll', () => {
+            jest.spyOn(cache, 'hasCacheForKey').mockReturnValue(false);
+            // A read that never resolves keeps the key marked as hydrating.
+            jest.spyOn(OnyxUtils, 'get').mockReturnValue(
+                new Promise<never>(() => {
+                    /* empty */
+                }),
+            );
+
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+            expect(onyxSubscriptionManager.isHydrating(ONYXKEYS.TEST_KEY)).toBeTruthy();
+
+            onyxSubscriptionManager.clearAll();
+
+            expect(onyxSubscriptionManager.isHydrating(ONYXKEYS.TEST_KEY)).toBeFalsy();
         });
     });
 

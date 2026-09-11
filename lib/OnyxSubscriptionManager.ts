@@ -3,6 +3,7 @@ import type {CollectionKeyBase, KeyValueMapping, OnyxCollection, OnyxKey, OnyxVa
 import * as Logger from './Logger';
 import cache from './OnyxCache';
 import OnyxKeys from './OnyxKeys';
+import OnyxUtils from './OnyxUtils';
 
 /**
  * Listener fired when an exact key's value changes.
@@ -25,8 +26,12 @@ type GenericListener = (value: unknown, key: OnyxKey) => void;
 class OnyxSubscriptionManager {
     private keyListeners: Map<OnyxKey, Set<GenericListener>>;
 
+    // Keys with a storage hydration currently in flight.
+    private hydrating: Set<OnyxKey>;
+
     constructor() {
         this.keyListeners = new Map();
+        this.hydrating = new Set();
     }
 
     /**
@@ -38,6 +43,64 @@ class OnyxSubscriptionManager {
             return cache.getCollectionData(key) as OnyxValue<TKey>;
         }
         return cache.get(key) as OnyxValue<TKey>;
+    }
+
+    /**
+     * True while a storage hydration for the given key is in flight.
+     */
+    isHydrating(key: OnyxKey): boolean {
+        return this.hydrating.has(key);
+    }
+
+    /**
+     * On a cache miss, read the key's value from storage once and notify subscribers when it lands.
+     */
+    private hydrateFromStorage<TKey extends OnyxKey>(key: TKey): void {
+        if (this.hydrating.has(key) || cache.hasCacheForKey(key)) {
+            return;
+        }
+        this.hydrating.add(key);
+
+        // Wait for in-flight writes to settle before reading storage. A key that any pending write
+        // touches becomes cached by that write, so we skip it here and avoid a stale storage read
+        // racing (and overwriting) those writes.
+        Promise.resolve()
+            .then(OnyxUtils.whenWritesSettled)
+            .then(() => {
+                if (cache.hasCacheForKey(key)) {
+                    this.hydrating.delete(key);
+                    return;
+                }
+
+                if (OnyxKeys.isCollectionKey(key)) {
+                    const memberKeys = Array.from(cache.getAllKeys()).filter((k) => OnyxKeys.isCollectionMemberKey(key, k));
+                    OnyxUtils.multiGet(memberKeys).then((dataMap) => {
+                        this.hydrating.delete(key);
+                        const collection: OnyxCollection<KeyValueMapping[TKey]> = {};
+                        for (const [memberKey, value] of dataMap) {
+                            if (value === undefined || value === null) {
+                                continue;
+                            }
+                            collection[memberKey] = value;
+                        }
+                        if (Object.keys(collection).length === 0) {
+                            return;
+                        }
+                        this.notifyCollection(key, collection);
+                    });
+                    return;
+                }
+
+                OnyxUtils.get(key).then((value) => {
+                    this.hydrating.delete(key);
+                    if (value === undefined || value === null) {
+                        cache.addNullishStorageKey(key);
+                        this.notifyKey(key, undefined as OnyxValue<TKey>);
+                        return;
+                    }
+                    this.notifyKey(key, value as OnyxValue<TKey>);
+                });
+            });
     }
 
     /**
@@ -55,6 +118,8 @@ class OnyxSubscriptionManager {
         }
 
         listeners.add(listener as GenericListener);
+
+        this.hydrateFromStorage(key);
 
         return () => {
             const set = this.keyListeners.get(key);
@@ -160,6 +225,7 @@ class OnyxSubscriptionManager {
      */
     clearAll(): void {
         this.keyListeners.clear();
+        this.hydrating.clear();
     }
 
     /**
