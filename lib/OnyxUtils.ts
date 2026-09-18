@@ -6,7 +6,7 @@ import type Onyx from './Onyx';
 import cache, {TASK} from './OnyxCache';
 import OnyxKeys from './OnyxKeys';
 import StorageCircuitBreaker from './StorageCircuitBreaker';
-import onyxStore from './OnyxStore';
+import onyxSubscriptionManager from './OnyxSubscriptionManager';
 import Storage from './storage';
 import {StorageErrorClass} from './storage/errors';
 import type {
@@ -59,10 +59,6 @@ function resetDiskPressureLogThrottle(): void {
     lastDiskPressureLogTime = 0;
 }
 
-function formatCaughtError(error: unknown): string {
-    return error instanceof Error ? error.toString() : String(error);
-}
-
 type OnyxMethod = ValueOf<typeof METHOD>;
 
 /** Result of `prepareKeyValuePairsForStorage`: pairs to write and keys whose `null` value marks them for removal. */
@@ -75,6 +71,13 @@ type PreparedKeyValuePairs = {
 let mergeQueue: Record<OnyxKey, Array<OnyxValue<OnyxKey>>> = {};
 let mergeQueuePromise: Record<OnyxKey, Promise<void>> = {};
 
+// In-flight writes tracked per affected key, so a subscriber's initial fire waits only for writes
+// that can change its own value, never for unrelated (or slow) writes elsewhere.
+const pendingWritesByKey = new Map<OnyxKey, Set<Promise<unknown>>>();
+
+// In-flight writes that affect every key (Onyx.clear). Any initial fire waits for these.
+const pendingGlobalWrites = new Set<Promise<unknown>>();
+
 // Optional user-provided key value states set when Onyx initializes or clears
 let defaultKeyStates: Record<OnyxKey, OnyxValue<OnyxKey>> = {};
 
@@ -82,6 +85,95 @@ let snapshotKey: OnyxKey | null = null;
 
 // Connections can be made before `Onyx.init`. They would wait for this task before resolving
 const deferredInitTask = createDeferredTask();
+
+/**
+ * Sentinel for "nothing delivered yet" in `connect()`'s per-subscription dedup. A Symbol
+ * can't collide with any real Onyx value, so the first `Object.is` check never matches and
+ * the initial fire runs even when a key's genuine first value is `undefined`. It only needs
+ * to be distinct from real values, not unique per subscription, so one module-level instance
+ * is reused by every connection.
+ */
+// eslint-disable-next-line rulesdir/no-negated-variables
+const NOT_DELIVERED = Symbol('NOT_DELIVERED');
+
+/**
+ * Registers an in-flight write under each key it can change, so `scheduleInitialFire` waits only for
+ * the writes relevant to a connecting key. Returns the same promise so callers can wrap a write's
+ * return value inline. The write is deregistered once it settles (success or failure).
+ */
+function trackPendingWrite<T>(keys: OnyxKey | OnyxKey[], promise: Promise<T>): Promise<T> {
+    // Drop nullish keys (e.g. a keyless `clear` item) so they never reach `pendingWritesForKey`'s scan.
+    const keyList = (Array.isArray(keys) ? keys : [keys]).filter((key) => typeof key === 'string');
+    for (const key of keyList) {
+        let set = pendingWritesByKey.get(key);
+        if (!set) {
+            set = new Set();
+            pendingWritesByKey.set(key, set);
+        }
+        set.add(promise);
+    }
+    const deregister = () => {
+        for (const key of keyList) {
+            const set = pendingWritesByKey.get(key);
+            if (!set) {
+                continue;
+            }
+            set.delete(promise);
+            if (set.size === 0) {
+                pendingWritesByKey.delete(key);
+            }
+        }
+    };
+    promise.then(deregister, deregister);
+    return promise;
+}
+
+/**
+ * Registers an in-flight write that affects every key (Onyx.clear). Deregistered once it settles.
+ */
+function trackPendingGlobalWrite<T>(promise: Promise<T>): Promise<T> {
+    pendingGlobalWrites.add(promise);
+    const deregister = () => pendingGlobalWrites.delete(promise);
+    promise.then(deregister, deregister);
+    return promise;
+}
+
+/**
+ * In-flight writes that can change the value delivered to a subscriber of `key`: writes to the key
+ * itself, writes to any member when `key` is a collection root, and global writes (clear).
+ */
+function pendingWritesForKey(key: OnyxKey): Array<Promise<unknown>> {
+    const promises = [...pendingGlobalWrites];
+    const own = pendingWritesByKey.get(key);
+    if (own) {
+        promises.push(...own);
+    }
+    if (OnyxKeys.isCollectionKey(key)) {
+        for (const [writeKey, set] of pendingWritesByKey) {
+            if (writeKey !== key && OnyxKeys.isCollectionMemberKey(key, writeKey)) {
+                promises.push(...set);
+            }
+        }
+    }
+    return promises;
+}
+
+/**
+ * Defer a `Onyx.connect` callback's initial fire until the writes relevant to `key` that are in
+ * flight this tick have applied, so it reads post-write cache and dedups against their notifications.
+ * The wait is scoped to `key` and snapshotted after one microtask, so an unrelated or slow write
+ * elsewhere cannot block or postpone this delivery, and writes issued after it do not either.
+ */
+function scheduleInitialFire(key: OnyxKey, fn: () => void): void {
+    Promise.resolve().then(() => {
+        const relevant = pendingWritesForKey(key);
+        if (relevant.length === 0) {
+            fn();
+            return;
+        }
+        Promise.all(relevant.map((promise) => promise.catch(() => undefined))).then(fn);
+    });
+}
 
 // Collection member IDs that Onyx should silently ignore across all operations — reads, writes, cache, and subscriber
 // notifications. This is used to filter out keys formed from invalid/default IDs (e.g. "-1", "0",
@@ -489,26 +581,21 @@ function getCachedCollection<TKey extends CollectionKeyBase>(collectionKey: TKey
 }
 
 /**
- * Notify subscribers of a single-key write. Wrapper over `onyxStore.notifyKey()`
- * that also performs LRU bookkeeping for eviction. Write paths call this instead
- * of touching the subscriber registry directly.
- *
- * Pass `suppressCollectionNotify: true` when notifying within a collection-batch
- * operation. The outer `notifyCollection()` fires collection listeners once, so
- * each per-key fire shouldn't re-trigger them.
+ * Notify subscribers of a single-key write. Wrapper over `onyxSubscriptionManager.notifyKey()`
+ * that also performs LRU bookkeeping for eviction.
  */
-function notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>, options?: {suppressCollectionNotify?: boolean}): void {
+function notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>): void {
     if (value !== null && value !== undefined) {
         cache.addLastAccessedKey(key, OnyxKeys.isCollectionKey(key));
     } else {
         cache.removeLastAccessedKey(key);
     }
-    onyxStore.notifyKey(key, value, options);
+    onyxSubscriptionManager.notifyKey(key, value);
 }
 
 /**
  * Notify subscribers of a batch collection update. Wrapper over
- * `onyxStore.notifyCollection()` that also performs LRU bookkeeping per
+ * `onyxSubscriptionManager.notifyCollection()` that also performs LRU bookkeeping per
  * changed member.
  */
 function notifyCollection<TKey extends CollectionKeyBase>(
@@ -525,20 +612,15 @@ function notifyCollection<TKey extends CollectionKeyBase>(
             cache.removeLastAccessedKey(memberKey);
         }
     }
-    onyxStore.notifyCollection(collectionKey, partialCollection, partialPreviousCollection);
+    onyxSubscriptionManager.notifyCollection(collectionKey, partialCollection, partialPreviousCollection);
 }
 
 /**
  * Remove a key from Onyx and update the subscribers.
- *
- * `suppressCollectionNotify` skips the collection-level fire. Used by
- * `prepareKeyValuePairsForStorage()` when called inside a collection-batch operation
- * (setCollection/mergeCollection/partialSetCollection/multiSet's collection batch),
- * because the outer `notifyCollection()` fires collection listeners once.
  */
-function remove<TKey extends OnyxKey>(key: TKey, options?: {suppressCollectionNotify?: boolean}): Promise<void> {
+function remove<TKey extends OnyxKey>(key: TKey): Promise<void> {
     cache.drop(key);
-    notifyKey(key, undefined as OnyxValue<TKey>, options);
+    notifyKey(key, undefined as OnyxValue<TKey>);
 
     if (OnyxKeys.isRamOnlyKey(key)) {
         return Promise.resolve();
@@ -1597,10 +1679,16 @@ function logKeyRemoved(onyxMethod: Extract<OnyxMethod, 'set' | 'merge'>, key: On
 function clearOnyxUtilsInternals() {
     mergeQueue = {};
     mergeQueuePromise = {};
+    pendingWritesByKey.clear();
+    pendingGlobalWrites.clear();
 }
 
 const OnyxUtils = {
     METHOD,
+    NOT_DELIVERED,
+    scheduleInitialFire,
+    trackPendingWrite,
+    trackPendingGlobalWrite,
     getMergeQueue,
     getMergeQueuePromise,
     getDefaultKeyStates,

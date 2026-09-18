@@ -81,6 +81,42 @@ describe('Onyx', () => {
                 expect(keys.has(ONYX_KEYS.OTHER_TEST)).toBe(false);
             }));
 
+    it('should deliver the initial callback for a cached key while an unrelated write is still pending', async () => {
+        let resolvePendingWrite: (() => void) | undefined;
+        // `StorageMock.setItem` is already a jest.fn (see the storage manual mock), so swap its
+        // implementation and restore it afterwards rather than spying.
+        const setItemMock = StorageMock.setItem as jest.Mock;
+        const originalSetItemImpl = setItemMock.getMockImplementation();
+        setItemMock.mockImplementation((key: OnyxKey, value: unknown) => {
+            // The write to TEST_KEY never finishes persisting; every other key persists normally.
+            if (key === ONYX_KEYS.TEST_KEY) {
+                return new Promise<void>((resolve) => {
+                    resolvePendingWrite = () => resolve();
+                });
+            }
+            return originalSetItemImpl?.(key, value);
+        });
+        const callback = jest.fn();
+
+        try {
+            await Onyx.set(ONYX_KEYS.OTHER_TEST, 'cached');
+
+            // Start a write whose persistence never settles.
+            Onyx.set(ONYX_KEYS.TEST_KEY, 'pending');
+
+            // Connecting to an already-cached, unrelated key must still receive its initial callback
+            // and not block on the unrelated pending write.
+            connection = Onyx.connectWithoutView({key: ONYX_KEYS.OTHER_TEST, callback});
+
+            await waitForPromisesToResolve();
+
+            expect(callback).toHaveBeenCalledWith('cached', ONYX_KEYS.OTHER_TEST);
+        } finally {
+            resolvePendingWrite?.();
+            setItemMock.mockImplementation(originalSetItemImpl);
+        }
+    });
+
     it('should restore a key with initial state if the key was set to null and Onyx.clear() is called', () =>
         Onyx.set(ONYX_KEYS.OTHER_TEST, 42)
             .then(() => Onyx.set(ONYX_KEYS.OTHER_TEST, null))
@@ -920,7 +956,7 @@ describe('Onyx', () => {
                 return waitForPromisesToResolve();
             })
             .then(() => {
-                // Collection mode: multiSet fires the collection callback per write.
+                // The collection callback receives the whole collection object.
                 expect(mockCallback).toHaveBeenLastCalledWith({test_1: {existingData: 'test'}, test_2: {existingData: 'test'}}, ONYX_KEYS.COLLECTION.TEST_KEY);
                 mockCallback.mockReset();
 
@@ -949,7 +985,8 @@ describe('Onyx', () => {
             .then(() => {
                 // mergeCollection fires the collection object once with all 3 merged members.
                 expect(mockCallback).toHaveBeenCalledTimes(1);
-                expect(mockCallback).toHaveBeenCalledWith(
+                expect(mockCallback).toHaveBeenNthCalledWith(
+                    1,
                     {
                         test_1: {ID: 123, value: 'one', existingData: 'test'},
                         test_2: {ID: 234, value: 'two', existingData: 'test'},
@@ -1006,7 +1043,7 @@ describe('Onyx', () => {
             });
     });
 
-    it('should return all collection keys as a single object when waitForCollectionCallback = true', () => {
+    it('should return all collection keys as a single object when connecting to a collection key', () => {
         const mockCallback = jest.fn();
 
         // Given some initial collection data
@@ -1027,7 +1064,7 @@ describe('Onyx', () => {
 
         return Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_CONNECT_COLLECTION, initialCollectionData as GenericCollection)
             .then(() => {
-                // When we connect to that collection with waitForCollectionCallback = true
+                // When we connect to that collection key
                 connection = Onyx.connect({
                     key: ONYX_KEYS.COLLECTION.TEST_CONNECT_COLLECTION,
                     callback: mockCallback,
@@ -1041,14 +1078,14 @@ describe('Onyx', () => {
             });
     });
 
-    it('should return all collection keys as a single object when updating a collection key with waitForCollectionCallback = true', () => {
+    it('should return all collection keys as a single object when updating a collection key', () => {
         const mockCallback = jest.fn();
         const collectionUpdate = {
             testPolicy_1: {ID: 234, value: 'one'},
             testPolicy_2: {ID: 123, value: 'two'},
         };
 
-        // Given an Onyx.connect call with waitForCollectionCallback=true
+        // Given an Onyx.connect call to a collection key
         connection = Onyx.connect({
             key: ONYX_KEYS.COLLECTION.TEST_POLICY,
             callback: mockCallback,
@@ -1061,8 +1098,7 @@ describe('Onyx', () => {
                     // Then we expect the callback to have called twice, once for the initial connect call + once for the collection update
                     expect(mockCallback).toHaveBeenCalledTimes(2);
 
-                    // Initial fire delivers the post-init frozen empty collection `{}`. Callers that
-                    // need a different signal for an empty collection guard at the consumer level.
+                    // AND the value for the first call should be {} since the initial fire delivers the post-init frozen empty collection
                     expect(mockCallback).toHaveBeenNthCalledWith(1, {}, ONYX_KEYS.COLLECTION.TEST_POLICY);
 
                     // AND the value for the second call should be collectionUpdate since the collection was updated
@@ -1078,7 +1114,7 @@ describe('Onyx', () => {
             testPolicy_2: {ID: 123, value: 'two'},
         };
 
-        // Given an Onyx.connect call with waitForCollectionCallback=false
+        // Given an Onyx.connect call to a single collection member key
         connection = Onyx.connect({
             key: `${ONYX_KEYS.COLLECTION.TEST_POLICY}${1}`,
             callback: mockCallback,
@@ -1091,8 +1127,7 @@ describe('Onyx', () => {
                     // Then we expect the callback to have called twice, once for the initial connect call + once for the collection update
                     expect(mockCallback).toHaveBeenCalledTimes(2);
 
-                    // Initial fire delivers `(undefined, key)`: the cache has no entry for
-                    // `testPolicy_1` yet, but we still pass the key.
+                    // AND the value for the first call should be `undefined` since the cache has no entry for testPolicy_1 yet
                     expect(mockCallback).toHaveBeenNthCalledWith(1, undefined, 'testPolicy_1');
 
                     // AND the value for the second call should be collectionUpdate since the collection was updated
@@ -1101,13 +1136,13 @@ describe('Onyx', () => {
         );
     });
 
-    it('should return all collection keys as a single object for subscriber using waitForCollectionCallback when a single collection member key is updated', () => {
+    it('should return all collection keys as a single object for a collection subscriber when a single collection member key is updated', () => {
         const mockCallback = jest.fn();
         const collectionUpdate = {
             testPolicy_1: {ID: 234, value: 'one'},
         };
 
-        // Given an Onyx.connect call with waitForCollectionCallback=true
+        // Given an Onyx.connect call to a collection key
         connection = Onyx.connect({
             key: ONYX_KEYS.COLLECTION.TEST_POLICY,
             callback: mockCallback,
@@ -1120,7 +1155,7 @@ describe('Onyx', () => {
                     // Then we expect the callback to have called twice, once for the initial connect call + once for the collection update
                     expect(mockCallback).toHaveBeenCalledTimes(2);
 
-                    // Initial fire delivers `{}` for a known-but-empty collection.
+                    // AND the value for the second call should be collectionUpdate
                     expect(mockCallback).toHaveBeenNthCalledWith(1, {}, ONYX_KEYS.COLLECTION.TEST_POLICY);
                     expect(mockCallback).toHaveBeenNthCalledWith(2, collectionUpdate, ONYX_KEYS.COLLECTION.TEST_POLICY);
                 })
@@ -1142,7 +1177,7 @@ describe('Onyx', () => {
             testPolicy_1: {ID: 234, value: 'one'},
         };
 
-        // Given an Onyx.connect call with waitForCollectionCallback=true
+        // Given an Onyx.connect call to a collection key
         connection = Onyx.connect({
             key: ONYX_KEYS.COLLECTION.TEST_POLICY,
             callback: mockCallback,
@@ -1193,12 +1228,10 @@ describe('Onyx', () => {
                 {onyxMethod: Onyx.METHOD.MERGE_COLLECTION, key: ONYX_KEYS.COLLECTION.TEST_UPDATE, value: {[itemKey]: {a: 'a'}} as GenericCollection},
             ]).then(() => {
                 expect(collectionCallback).toHaveBeenCalledTimes(2);
-                // Initial fire delivers `{}` (legacy `undefined`-for-empty-initial shim was removed).
                 expect(collectionCallback).toHaveBeenNthCalledWith(1, {}, ONYX_KEYS.COLLECTION.TEST_UPDATE);
                 expect(collectionCallback).toHaveBeenNthCalledWith(2, {[itemKey]: {a: 'a'}}, ONYX_KEYS.COLLECTION.TEST_UPDATE);
 
                 expect(testCallback).toHaveBeenCalledTimes(2);
-                // Initial fire delivers `(undefined, key)`: cache has no entry yet, but we still pass the key.
                 expect(testCallback).toHaveBeenNthCalledWith(1, undefined, ONYX_KEYS.TEST_KEY);
                 expect(testCallback).toHaveBeenNthCalledWith(2, 'taco', ONYX_KEYS.TEST_KEY);
 
@@ -1458,11 +1491,11 @@ describe('Onyx', () => {
                 // Cat hasn't changed from its original value, expect only the initial connect callback
                 expect(catCallback).toHaveBeenCalledTimes(1);
 
-                // Dog was created by the merge. Onyx writes cache-first/storage-second, so the
-                // mergeCollection notification reaches the subscriber before the initial connect
-                // fire; the initial fire then reads the already-merged value and is deduped. The
-                // subscriber therefore receives the final value once, never the transient undefined.
-                expect(dogCallback).toHaveBeenCalledTimes(1);
+                // Dog does not exist when its subscription is created, and the mergeCollection that
+                // creates it is issued after connect, so the initial fire delivers `undefined` and the
+                // merge then delivers the created value.
+                expect(dogCallback).toHaveBeenCalledTimes(2);
+                expect(dogCallback).toHaveBeenNthCalledWith(1, undefined, dog);
                 expect(dogCallback).toHaveBeenLastCalledWith({name: 'Rex'}, dog);
 
                 connections.map((id) => Onyx.disconnect(id));
@@ -1490,7 +1523,7 @@ describe('Onyx', () => {
 
         await Onyx.update([{key: cat, value: finalValue, onyxMethod: Onyx.METHOD.MERGE}]);
 
-        // Collection mode: callback fires with the whole SNAPSHOT collection object.
+        // The SNAPSHOT collection-root subscriber receives the whole collection.
         expect(callback).toBeCalledTimes(2);
         expect(callback).toHaveBeenNthCalledWith(1, {[snapshot1]: {data: {[cat]: initialValue}}}, ONYX_KEYS.COLLECTION.SNAPSHOT);
         expect(callback).toHaveBeenNthCalledWith(2, {[snapshot1]: {data: {[cat]: finalValue}}}, ONYX_KEYS.COLLECTION.SNAPSHOT);
@@ -1522,7 +1555,7 @@ describe('Onyx', () => {
 
         await Onyx.update([{key: cat, value: finalValue, onyxMethod: Onyx.METHOD.MERGE}]);
 
-        // Collection mode: callback fires with the whole SNAPSHOT collection object.
+        // The SNAPSHOT collection-root subscriber receives the whole collection.
         expect(callback).toBeCalledTimes(2);
         expect(callback).toHaveBeenNthCalledWith(1, {[snapshot1]: {data: {[cat]: initialValue}}}, ONYX_KEYS.COLLECTION.SNAPSHOT);
         expect(callback).toHaveBeenNthCalledWith(
@@ -1669,10 +1702,8 @@ describe('Onyx', () => {
                     },
                 },
             ]).then(() => {
-                // Initial fire is deferred past in-flight writes via `scheduleInitialFire`,
-                // so it reads the post-update collection. The write-driven fire already
-                // delivered the same collection, so the dedup in `deliverCollection` suppresses
-                // the initial fire.
+                // The deferred initial fire reads the post-update collection and dedups against the
+                // write-driven fire, so the subscriber receives the merged collection exactly once.
                 expect(routesCollectionCallback).toHaveBeenCalledTimes(1);
                 expect(routesCollectionCallback).toHaveBeenNthCalledWith(
                     1,
@@ -1754,14 +1785,19 @@ describe('Onyx', () => {
                 {onyxMethod: Onyx.METHOD.MERGE, key: lisa, value: {car: 'SUV', age: 21}},
                 {onyxMethod: Onyx.METHOD.MERGE, key: bob, value: {age: 25}},
             ]).then(() => {
-                // The wrapper fires an initial callback before the post-update callback, so we
-                // assert on the final post-update call via `toHaveBeenLastCalledWith` instead of
-                // pinning specific indices.
-                expect(testCallback).toHaveBeenLastCalledWith({food: 'taco', drink: 'wine'}, ONYX_KEYS.TEST_KEY);
+                expect(testCallback).toHaveBeenNthCalledWith(1, {food: 'taco', drink: 'wine'}, ONYX_KEYS.TEST_KEY);
 
-                expect(otherTestCallback).toHaveBeenLastCalledWith({food: 'pizza', drink: 'water'}, ONYX_KEYS.OTHER_TEST);
+                expect(otherTestCallback).toHaveBeenNthCalledWith(1, {food: 'pizza', drink: 'water'}, ONYX_KEYS.OTHER_TEST);
 
-                expect(animalsCollectionCallback).toHaveBeenLastCalledWith(
+                expect(animalsCollectionCallback).toHaveBeenNthCalledWith(
+                    1,
+                    {
+                        [cat]: {age: 3, sound: 'meow'},
+                    },
+                    ONYX_KEYS.COLLECTION.ANIMALS,
+                );
+                expect(animalsCollectionCallback).toHaveBeenNthCalledWith(
+                    2,
                     {
                         [cat]: {age: 3, sound: 'meow'},
                         [dog]: {size: 'M', sound: 'woof'},
@@ -1769,9 +1805,10 @@ describe('Onyx', () => {
                     ONYX_KEYS.COLLECTION.ANIMALS,
                 );
 
-                expect(catCallback).toHaveBeenLastCalledWith({age: 3, sound: 'meow'}, cat);
+                expect(catCallback).toHaveBeenNthCalledWith(1, {age: 3, sound: 'meow'}, cat);
 
-                expect(peopleCollectionCallback).toHaveBeenLastCalledWith(
+                expect(peopleCollectionCallback).toHaveBeenNthCalledWith(
+                    1,
                     {
                         [bob]: {age: 25, car: 'sedan'},
                         [lisa]: {age: 21, car: 'SUV'},
@@ -3401,9 +3438,6 @@ describe('RAM-only keys should not read from storage', () => {
         });
         await act(async () => waitForPromisesToResolve());
 
-        // Initial fire delivers the post-init frozen `{}` for a known-but-empty collection.
-        // What matters for this test is that the RAM-only members have not been hydrated from
-        // storage: the collection has no entries, and `cache.get(member)` returns `undefined`.
         expect(receivedCollection).toEqual({});
         expect(cache.get(collectionMember1)).toBeUndefined();
         expect(cache.get(collectionMember2)).toBeUndefined();

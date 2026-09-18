@@ -1,6 +1,6 @@
 import {deepEqual} from 'fast-equals';
 import {useCallback, useEffect, useMemo, useRef, useSyncExternalStore} from 'react';
-import onyxStore from './OnyxStore';
+import onyxSubscriptionManager from './OnyxSubscriptionManager';
 import type {OnyxKey, OnyxValue} from './types';
 
 /**
@@ -33,7 +33,7 @@ type UseOnyxStateOptions<T> = {
 };
 
 /**
- * Lazy, sealed Proxy whose getters route to `onyxStore.getState`. Used as both
+ * Lazy, sealed Proxy whose getters route to `onyxSubscriptionManager.getState`. Used as both
  * `state` and `previousState`. The previousState variant captures the dep values
  * frozen at the previous selector invocation.
  */
@@ -62,7 +62,7 @@ function createStateView(snapshotProvider: (key: OnyxKey) => OnyxValue<OnyxKey>)
     return new Proxy<Record<string, never>>({}, handler) as unknown as OnyxStateView;
 }
 
-const liveStateView = createStateView((key) => onyxStore.getState(key as OnyxKey));
+const liveStateView = createStateView((key) => onyxSubscriptionManager.getState(key as OnyxKey));
 
 /**
  * Default equality: reference equality with a deepEqual fallback for object outputs.
@@ -118,7 +118,7 @@ function useOnyxState<T>(selector: UseOnyxStateSelector<T>, options: UseOnyxStat
     // Only `subscribe` must be referentially stable for `useSyncExternalStore` (it controls
     // re-subscription). `getSnapshot` may change identity freely — React just re-reads it —
     // so it closes over the latest `selector`/`selectorEquality` directly instead of via refs.
-    const subscribe = useCallback((onStoreChange: () => void) => onyxStore.subscribeState(onStoreChange, depsArray), [depsArray]);
+    const subscribe = useCallback((onStoreChange: () => void) => onyxSubscriptionManager.subscribeState(onStoreChange, depsArray), [depsArray]);
 
     // `previousViewRef` is a Proxy over the dep values captured at the last committed
     // render. It is ONLY mutated in the effect below (post-commit), never in getSnapshot,
@@ -148,7 +148,7 @@ function useOnyxState<T>(selector: UseOnyxStateSelector<T>, options: UseOnyxStat
     useEffect(() => {
         const currentDepValues: Record<OnyxKey, OnyxValue<OnyxKey>> = {};
         for (const dep of depsArray) {
-            currentDepValues[dep] = onyxStore.getState(dep);
+            currentDepValues[dep] = onyxSubscriptionManager.getState(dep);
         }
         previousViewRef.current = createStateView((key) => currentDepValues[key]);
     });

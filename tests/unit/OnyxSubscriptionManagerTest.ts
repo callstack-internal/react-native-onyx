@@ -1,16 +1,16 @@
 import type {OnyxKey} from '../../lib';
 import Onyx from '../../lib';
-import onyxStore from '../../lib/OnyxStore';
+import onyxSubscriptionManager from '../../lib/OnyxSubscriptionManager';
 import cache from '../../lib/OnyxCache';
 import * as Logger from '../../lib/Logger';
 
-// We need access to some internal properties of `onyxStore` during the tests but they are private,
+// We need access to some internal properties of `onyxSubscriptionManager` during the tests but they are private,
 // so this workaround allows us to have access to them. The maps are created once in the constructor
 // and only ever `.clear()`ed (never reassigned), so capturing the references here stays valid.
 // eslint-disable-next-line dot-notation
-const keyListeners = onyxStore['keyListeners'];
+const keyListeners = onyxSubscriptionManager['keyListeners'];
 // eslint-disable-next-line dot-notation
-const stateListenersByDep = onyxStore['stateListenersByDep'];
+const stateListenersByDep = onyxSubscriptionManager['stateListenersByDep'];
 
 const ONYXKEYS = {
     TEST_KEY: 'test',
@@ -30,10 +30,10 @@ Onyx.init({
 
 beforeEach(() => Onyx.clear());
 
-describe('OnyxStore', () => {
+describe('OnyxSubscriptionManager', () => {
     // Always start from a clean registry.
     beforeEach(() => {
-        onyxStore.clearAll();
+        onyxSubscriptionManager.clearAll();
     });
 
     afterEach(() => {
@@ -43,9 +43,9 @@ describe('OnyxStore', () => {
     describe('subscribe / notifyKey', () => {
         it('should fire the listener with (value, key) on notifyKey', () => {
             const callback = jest.fn();
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback);
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'hello');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'hello');
 
             expect(callback).toHaveBeenCalledTimes(1);
             expect(callback).toHaveBeenCalledWith('hello', ONYXKEYS.TEST_KEY);
@@ -54,10 +54,10 @@ describe('OnyxStore', () => {
         it('should fire all listeners registered on the same key', () => {
             const callback1 = jest.fn();
             const callback2 = jest.fn();
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback1);
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback2);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback1);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback2);
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 1);
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 1);
 
             expect(callback1).toHaveBeenCalledTimes(1);
             expect(callback2).toHaveBeenCalledTimes(1);
@@ -65,11 +65,11 @@ describe('OnyxStore', () => {
 
         it('should not fire the listener after it unsubscribes', () => {
             const callback = jest.fn();
-            const unsubscribe = onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback);
+            const unsubscribe = onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback);
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'first');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'first');
             unsubscribe();
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'second');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'second');
 
             expect(callback).toHaveBeenCalledTimes(1);
             expect(callback).toHaveBeenLastCalledWith('first', ONYXKEYS.TEST_KEY);
@@ -78,18 +78,18 @@ describe('OnyxStore', () => {
         it('should only unsubscribe the specific listener, leaving others intact', () => {
             const callback1 = jest.fn();
             const callback2 = jest.fn();
-            const unsubscribe1 = onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback1);
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback2);
+            const unsubscribe1 = onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback1);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback2);
 
             unsubscribe1();
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 1);
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 1);
 
             expect(callback1).not.toHaveBeenCalled();
             expect(callback2).toHaveBeenCalledTimes(1);
         });
 
         it('should delete the key entry from the internal map once the last listener unsubscribes', () => {
-            const unsubscribe = onyxStore.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+            const unsubscribe = onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
             expect(keyListeners.has(ONYXKEYS.TEST_KEY)).toBeTruthy();
 
             unsubscribe();
@@ -98,18 +98,37 @@ describe('OnyxStore', () => {
         });
 
         it('should be a no-op to notify a key with no listeners', () => {
-            expect(() => onyxStore.notifyKey('keyWithNoListeners' as OnyxKey, 'x')).not.toThrow();
+            expect(() => onyxSubscriptionManager.notifyKey('keyWithNoListeners' as OnyxKey, 'x')).not.toThrow();
         });
 
         it('should be idempotent when unsubscribing more than once', () => {
             const callback = jest.fn();
-            const unsubscribe = onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback);
+            const unsubscribe = onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback);
 
             unsubscribe();
             expect(() => unsubscribe()).not.toThrow();
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 1);
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 1);
             expect(callback).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('getState', () => {
+        it('should return the cached value for a single key', () => {
+            cache.set(ONYXKEYS.TEST_KEY, 'hello');
+
+            expect(onyxSubscriptionManager.getState(ONYXKEYS.TEST_KEY)).toBe('hello');
+        });
+
+        it('should return undefined for a single key that is not in the cache', () => {
+            expect(onyxSubscriptionManager.getState(ONYXKEYS.OTHER_TEST)).toBeUndefined();
+        });
+
+        it('should return the collection object for a collection key', () => {
+            const collectionData = {[MEMBER_1]: {id: 1}, [MEMBER_2]: {id: 2}};
+            jest.spyOn(cache, 'getCollectionData').mockReturnValue(collectionData);
+
+            expect(onyxSubscriptionManager.getState(COLLECTION)).toBe(collectionData);
         });
     });
 
@@ -119,9 +138,9 @@ describe('OnyxStore', () => {
             const getCollectionData = jest.spyOn(cache, 'getCollectionData').mockReturnValue(collectionData);
 
             const callback = jest.fn();
-            onyxStore.subscribe(COLLECTION, callback);
+            onyxSubscriptionManager.subscribe(COLLECTION, callback);
 
-            onyxStore.notifyKey(MEMBER_1, {id: 1});
+            onyxSubscriptionManager.notifyKey(MEMBER_1, {id: 1});
 
             expect(getCollectionData).toHaveBeenCalledWith(COLLECTION);
             expect(callback).toHaveBeenCalledTimes(1);
@@ -134,37 +153,21 @@ describe('OnyxStore', () => {
 
             const memberCallback = jest.fn();
             const collectionCallback = jest.fn();
-            onyxStore.subscribe(MEMBER_1, memberCallback);
-            onyxStore.subscribe(COLLECTION, collectionCallback);
+            onyxSubscriptionManager.subscribe(MEMBER_1, memberCallback);
+            onyxSubscriptionManager.subscribe(COLLECTION, collectionCallback);
 
-            onyxStore.notifyKey(MEMBER_1, {id: 1});
+            onyxSubscriptionManager.notifyKey(MEMBER_1, {id: 1});
 
             expect(memberCallback).toHaveBeenCalledWith({id: 1}, MEMBER_1);
             expect(collectionCallback).toHaveBeenCalledWith(collectionData, COLLECTION);
         });
 
-        it('should skip the collection-root listener but still fire the exact-member listener when suppressCollectionNotify is set', () => {
-            const getCollectionData = jest.spyOn(cache, 'getCollectionData').mockReturnValue({});
-
-            const memberCallback = jest.fn();
-            const collectionCallback = jest.fn();
-            onyxStore.subscribe(MEMBER_1, memberCallback);
-            onyxStore.subscribe(COLLECTION, collectionCallback);
-
-            onyxStore.notifyKey(MEMBER_1, {id: 1}, {suppressCollectionNotify: true});
-
-            expect(memberCallback).toHaveBeenCalledTimes(1);
-            expect(collectionCallback).not.toHaveBeenCalled();
-            // The collection object is never read when suppressed.
-            expect(getCollectionData).not.toHaveBeenCalled();
-        });
-
         it('should not perform collection routing for a non-member single key', () => {
             const getCollectionData = jest.spyOn(cache, 'getCollectionData');
             const callback = jest.fn();
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback);
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'x');
 
             expect(callback).toHaveBeenCalledTimes(1);
             expect(getCollectionData).not.toHaveBeenCalled();
@@ -177,9 +180,9 @@ describe('OnyxStore', () => {
             jest.spyOn(cache, 'getCollectionData').mockReturnValue(collectionData);
 
             const callback = jest.fn();
-            onyxStore.subscribe(COLLECTION, callback);
+            onyxSubscriptionManager.subscribe(COLLECTION, callback);
 
-            onyxStore.notifyCollection(COLLECTION, {[MEMBER_1]: {id: 1}, [MEMBER_2]: {id: 2}});
+            onyxSubscriptionManager.notifyCollection(COLLECTION, {[MEMBER_1]: {id: 1}, [MEMBER_2]: {id: 2}});
 
             expect(callback).toHaveBeenCalledTimes(1);
             expect(callback).toHaveBeenCalledWith(collectionData, COLLECTION);
@@ -192,10 +195,10 @@ describe('OnyxStore', () => {
 
             const member1Callback = jest.fn();
             const member2Callback = jest.fn();
-            onyxStore.subscribe(MEMBER_1, member1Callback);
-            onyxStore.subscribe(MEMBER_2, member2Callback);
+            onyxSubscriptionManager.subscribe(MEMBER_1, member1Callback);
+            onyxSubscriptionManager.subscribe(MEMBER_2, member2Callback);
 
-            onyxStore.notifyCollection(
+            onyxSubscriptionManager.notifyCollection(
                 COLLECTION,
                 {[MEMBER_1]: {id: 1}, [MEMBER_2]: shared},
                 {[MEMBER_2]: shared}, // previous: member 2 unchanged by reference
@@ -205,11 +208,25 @@ describe('OnyxStore', () => {
             expect(member2Callback).not.toHaveBeenCalled();
         });
 
+        it('should notify the exact-member listener when the member is deleted without a previous collection', () => {
+            // member1 has already been removed from the cache by the time notifyCollection runs.
+            jest.spyOn(cache, 'getCollectionData').mockReturnValue({[MEMBER_2]: {id: 2}});
+
+            const member1Callback = jest.fn();
+            onyxSubscriptionManager.subscribe(MEMBER_1, member1Callback);
+
+            // No partialPreviousCollection passed — a removed member reads undefined on both
+            // sides and must not be treated as unchanged.
+            onyxSubscriptionManager.notifyCollection(COLLECTION, {[MEMBER_1]: null});
+
+            expect(member1Callback).toHaveBeenCalledTimes(1);
+        });
+
         it('should be a no-op when the partial collection is empty', () => {
             const callback = jest.fn();
-            onyxStore.subscribe(COLLECTION, callback);
+            onyxSubscriptionManager.subscribe(COLLECTION, callback);
 
-            onyxStore.notifyCollection(COLLECTION, {});
+            onyxSubscriptionManager.notifyCollection(COLLECTION, {});
 
             expect(callback).not.toHaveBeenCalled();
         });
@@ -218,36 +235,36 @@ describe('OnyxStore', () => {
     describe('subscribeState', () => {
         it('should fire a state listener when one of its declared deps changes', () => {
             const callback = jest.fn();
-            onyxStore.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
+            onyxSubscriptionManager.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'x');
 
             expect(callback).toHaveBeenCalledTimes(1);
         });
 
         it('should not fire when a non-dependency key changes', () => {
             const callback = jest.fn();
-            onyxStore.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
+            onyxSubscriptionManager.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
 
-            onyxStore.notifyKey(ONYXKEYS.OTHER_TEST, 'x');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.OTHER_TEST, 'x');
 
             expect(callback).not.toHaveBeenCalled();
         });
 
         it('should fire a listener that depends on a collection key when a member is written', () => {
             const callback = jest.fn();
-            onyxStore.subscribeState(callback, [COLLECTION]);
+            onyxSubscriptionManager.subscribeState(callback, [COLLECTION]);
 
-            onyxStore.notifyKey(MEMBER_1, {id: 1});
+            onyxSubscriptionManager.notifyKey(MEMBER_1, {id: 1});
 
             expect(callback).toHaveBeenCalledTimes(1);
         });
 
         it('should fire only once when a listener depends on both a member and its collection key', () => {
             const callback = jest.fn();
-            onyxStore.subscribeState(callback, [MEMBER_1, COLLECTION]);
+            onyxSubscriptionManager.subscribeState(callback, [MEMBER_1, COLLECTION]);
 
-            onyxStore.notifyKey(MEMBER_1, {id: 1});
+            onyxSubscriptionManager.notifyKey(MEMBER_1, {id: 1});
 
             expect(callback).toHaveBeenCalledTimes(1);
         });
@@ -258,11 +275,11 @@ describe('OnyxStore', () => {
             const collectionCallback = jest.fn();
             const member1Callback = jest.fn();
             const bothCallback = jest.fn();
-            onyxStore.subscribeState(collectionCallback, [COLLECTION]);
-            onyxStore.subscribeState(member1Callback, [MEMBER_1]);
-            onyxStore.subscribeState(bothCallback, [COLLECTION, MEMBER_1]);
+            onyxSubscriptionManager.subscribeState(collectionCallback, [COLLECTION]);
+            onyxSubscriptionManager.subscribeState(member1Callback, [MEMBER_1]);
+            onyxSubscriptionManager.subscribeState(bothCallback, [COLLECTION, MEMBER_1]);
 
-            onyxStore.notifyCollection(COLLECTION, {[MEMBER_1]: {id: 1}, [MEMBER_2]: {id: 2}});
+            onyxSubscriptionManager.notifyCollection(COLLECTION, {[MEMBER_1]: {id: 1}, [MEMBER_2]: {id: 2}});
 
             expect(collectionCallback).toHaveBeenCalledTimes(1);
             expect(member1Callback).toHaveBeenCalledTimes(1);
@@ -271,23 +288,23 @@ describe('OnyxStore', () => {
 
         it('should fire on a change to any of several declared deps', () => {
             const callback = jest.fn();
-            onyxStore.subscribeState(callback, [ONYXKEYS.TEST_KEY, ONYXKEYS.OTHER_TEST]);
+            onyxSubscriptionManager.subscribeState(callback, [ONYXKEYS.TEST_KEY, ONYXKEYS.OTHER_TEST]);
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'a');
-            onyxStore.notifyKey(ONYXKEYS.OTHER_TEST, 'b');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'a');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.OTHER_TEST, 'b');
 
             expect(callback).toHaveBeenCalledTimes(2);
         });
 
         it('should stop firing after unsubscribe and clean up the dep index', () => {
             const callback = jest.fn();
-            const unsubscribe = onyxStore.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
+            const unsubscribe = onyxSubscriptionManager.subscribeState(callback, [ONYXKEYS.TEST_KEY]);
             expect(stateListenersByDep.has(ONYXKEYS.TEST_KEY)).toBeTruthy();
 
             unsubscribe();
             expect(stateListenersByDep.has(ONYXKEYS.TEST_KEY)).toBeFalsy();
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'x');
             expect(callback).not.toHaveBeenCalled();
         });
 
@@ -299,10 +316,10 @@ describe('OnyxStore', () => {
                 throw new Error('boom');
             });
             const healthyCallback = jest.fn();
-            onyxStore.subscribeState(throwingCallback, [ONYXKEYS.TEST_KEY]);
-            onyxStore.subscribeState(healthyCallback, [ONYXKEYS.TEST_KEY]);
+            onyxSubscriptionManager.subscribeState(throwingCallback, [ONYXKEYS.TEST_KEY]);
+            onyxSubscriptionManager.subscribeState(healthyCallback, [ONYXKEYS.TEST_KEY]);
 
-            expect(() => onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x')).not.toThrow();
+            expect(() => onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'x')).not.toThrow();
 
             expect(throwingCallback).toHaveBeenCalledTimes(1);
             expect(healthyCallback).toHaveBeenCalledTimes(1);
@@ -312,36 +329,36 @@ describe('OnyxStore', () => {
 
     describe('hasListenersForKey', () => {
         it('should return true for an exact-key subscriber', () => {
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
-            expect(onyxStore.hasListenersForKey(ONYXKEYS.TEST_KEY)).toBeTruthy();
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+            expect(onyxSubscriptionManager.hasListenersForKey(ONYXKEYS.TEST_KEY)).toBeTruthy();
         });
 
         it('should return true for a member key when its parent collection has a subscriber', () => {
-            onyxStore.subscribe(COLLECTION, jest.fn());
-            expect(onyxStore.hasListenersForKey(MEMBER_1)).toBeTruthy();
+            onyxSubscriptionManager.subscribe(COLLECTION, jest.fn());
+            expect(onyxSubscriptionManager.hasListenersForKey(MEMBER_1)).toBeTruthy();
         });
 
         it('should return false when there are no relevant subscribers', () => {
-            expect(onyxStore.hasListenersForKey('someUnwatchedKey')).toBeFalsy();
+            expect(onyxSubscriptionManager.hasListenersForKey('someUnwatchedKey')).toBeFalsy();
         });
 
         it('should return false after the last listener unsubscribes', () => {
-            const unsubscribe = onyxStore.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
+            const unsubscribe = onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, jest.fn());
             unsubscribe();
-            expect(onyxStore.hasListenersForKey(ONYXKEYS.TEST_KEY)).toBeFalsy();
+            expect(onyxSubscriptionManager.hasListenersForKey(ONYXKEYS.TEST_KEY)).toBeFalsy();
         });
     });
 
     describe('clearAll', () => {
         it('should wipe key and collection subscriptions', () => {
             const keyCallback = jest.fn();
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, keyCallback);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, keyCallback);
 
-            onyxStore.clearAll();
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x');
+            onyxSubscriptionManager.clearAll();
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'x');
 
             expect(keyCallback).not.toHaveBeenCalled();
-            expect(onyxStore.hasListenersForKey(ONYXKEYS.TEST_KEY)).toBeFalsy();
+            expect(onyxSubscriptionManager.hasListenersForKey(ONYXKEYS.TEST_KEY)).toBeFalsy();
         });
     });
 
@@ -350,11 +367,11 @@ describe('OnyxStore', () => {
             let unsubscribe: () => void = jest.fn();
             const callback = jest.fn(() => {
                 unsubscribe();
-                unsubscribe = onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback);
+                unsubscribe = onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback);
             });
-            unsubscribe = onyxStore.subscribe(ONYXKEYS.TEST_KEY, callback);
+            unsubscribe = onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, callback);
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'x');
 
             expect(callback).toHaveBeenCalledTimes(1);
         });
@@ -362,15 +379,15 @@ describe('OnyxStore', () => {
         it('should not deliver the in-flight notification to a listener added during dispatch', () => {
             const lateCallback = jest.fn();
             const firstCallback = jest.fn(() => {
-                onyxStore.subscribe(ONYXKEYS.TEST_KEY, lateCallback);
+                onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, lateCallback);
             });
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, firstCallback);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, firstCallback);
 
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'first');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'first');
             expect(lateCallback).not.toHaveBeenCalled();
 
             // It receives later notifications normally.
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'second');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'second');
             expect(lateCallback).toHaveBeenCalledTimes(1);
             expect(lateCallback).toHaveBeenCalledWith('second', ONYXKEYS.TEST_KEY);
         });
@@ -381,15 +398,15 @@ describe('OnyxStore', () => {
             const firstCallback = jest.fn(() => {
                 unsubscribeSibling();
             });
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, firstCallback);
-            unsubscribeSibling = onyxStore.subscribe(ONYXKEYS.TEST_KEY, siblingCallback);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, firstCallback);
+            unsubscribeSibling = onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, siblingCallback);
 
             // The sibling was registered when dispatch began, so the snapshot still fires it.
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'first');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'first');
             expect(siblingCallback).toHaveBeenCalledTimes(1);
 
             // Now unsubscribed, it does not fire again.
-            onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'second');
+            onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'second');
             expect(siblingCallback).toHaveBeenCalledTimes(1);
         });
     });
@@ -403,10 +420,10 @@ describe('OnyxStore', () => {
                 throw new Error('boom');
             });
             const healthyCallback = jest.fn();
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, throwingCallback);
-            onyxStore.subscribe(ONYXKEYS.TEST_KEY, healthyCallback);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, throwingCallback);
+            onyxSubscriptionManager.subscribe(ONYXKEYS.TEST_KEY, healthyCallback);
 
-            expect(() => onyxStore.notifyKey(ONYXKEYS.TEST_KEY, 'x')).not.toThrow();
+            expect(() => onyxSubscriptionManager.notifyKey(ONYXKEYS.TEST_KEY, 'x')).not.toThrow();
 
             expect(throwingCallback).toHaveBeenCalledTimes(1);
             expect(healthyCallback).toHaveBeenCalledTimes(1);

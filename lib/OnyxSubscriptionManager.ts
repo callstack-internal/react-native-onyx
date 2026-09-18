@@ -7,12 +7,13 @@ import OnyxKeys from './OnyxKeys';
 /**
  * Listener fired when an exact key's value changes.
  */
-type KeyListener<TKey extends OnyxKey = OnyxKey> = (value: OnyxValue<TKey>, key: TKey) => void;
+type Listener<TKey extends OnyxKey = OnyxKey> = (value: OnyxValue<TKey>, key: TKey) => void;
 
 /**
- * Storage form of a listener, value erased so one Map can hold listeners for every key type.
+ * Generic listener, without specific types for the keys or values.
+ * This way a single Map can hold listeners for every key type.
  */
-type StoredListener = (value: unknown, key: OnyxKey) => void;
+type GenericListener = (value: unknown, key: OnyxKey) => void;
 
 /** Listener fired when any of a state listener's declared dependency keys changes. Used by `useOnyxState`. */
 type StateListenerCallback = () => void;
@@ -22,27 +23,15 @@ type StateListenerEntry = {
     deps: Set<OnyxKey>;
 };
 
-type NotifyKeyOptions = {
-    /**
-     * Skips collection-level routing. Collection-batch write paths set it so each member write
-     * doesn't re-trigger the collection-level listeners; the outer `notifyCollection()` fires those once.
-     */
-    suppressCollectionNotify?: boolean;
-};
-
 /**
- * `OnyxStore` is a single listener registry for Onyx reads/subscriptions. Two indexes back
- * every subscription:
- *
- *   keyListeners:         exact-key listeners (a single key, a collection object,
- *                         or a specific collection member).
- *   stateListenersByDep:  listeners that re-evaluate when any of their declared dependency
- *                         keys change, indexed by dep key for O(1) notify lookup. Used by `useOnyxState`.
- *
- * Write paths call `notifyKey()` (single-key write) or `notifyCollection()` (batch collection update).
+ * OnyxSubscriptionManager is a registry for Onyx subscriptions, backed by two indexes:
+ *    - keyListeners:        exact-key listeners, keyed by OnyxKey (a single key, a collection object,
+ *                           or a collection member). Notified via `notifyKey`/`notifyCollection`.
+ *    - stateListenersByDep: listeners that re-evaluate when any of their declared dependency keys
+ *                           change, indexed by dep key. Used by `useOnyxState`.
  */
-class OnyxStore {
-    private keyListeners: Map<OnyxKey, Set<StoredListener>>;
+class OnyxSubscriptionManager {
+    private keyListeners: Map<OnyxKey, Set<GenericListener>>;
 
     private stateListenersByDep: Map<OnyxKey, Set<StateListenerEntry>>;
 
@@ -69,14 +58,14 @@ class OnyxStore {
      *
      * Returns an unsubscribe function.
      */
-    subscribe<TKey extends OnyxKey>(key: TKey, listener: KeyListener<TKey>): () => void {
+    subscribe<TKey extends OnyxKey>(key: TKey, listener: Listener<TKey>): () => void {
         let listeners = this.keyListeners.get(key);
         if (!listeners) {
             listeners = new Set();
             this.keyListeners.set(key, listeners);
         }
 
-        listeners.add(listener as StoredListener);
+        listeners.add(listener as GenericListener);
 
         return () => {
             const set = this.keyListeners.get(key);
@@ -84,7 +73,7 @@ class OnyxStore {
                 return;
             }
 
-            set.delete(listener as StoredListener);
+            set.delete(listener as GenericListener);
 
             if (set.size === 0) {
                 this.keyListeners.delete(key);
@@ -129,10 +118,10 @@ class OnyxStore {
      * Dispatch:
      *   1. keyListeners.get(key): exact-key subscribers (always fires).
      *   2. If key is a collection member, keyListeners.get(collectionKey): collection
-     *      listeners for the parent collection (unless `options.suppressCollectionNotify`).
+     *      listeners for the parent collection.
      *   3. State listeners whose deps include `key` or its collection key.
      */
-    notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>, options?: NotifyKeyOptions): void {
+    notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>): void {
         // 1. Exact-key listeners
         const exact = this.keyListeners.get(key);
         if (exact && exact.size > 0) {
@@ -146,7 +135,7 @@ class OnyxStore {
         // unsupported anti-pattern; treat them as opaque single-key writes.
         const collectionKey = OnyxKeys.getCollectionKey(key);
         const isCollectionMemberWrite = collectionKey !== undefined && collectionKey !== key;
-        if (isCollectionMemberWrite && !options?.suppressCollectionNotify) {
+        if (isCollectionMemberWrite) {
             const collectionListeners = this.keyListeners.get(collectionKey);
             if (collectionListeners && collectionListeners.size > 0) {
                 const collectionData = cache.getCollectionData(collectionKey);
@@ -182,8 +171,6 @@ class OnyxStore {
         if (changedKeys.length === 0) {
             return;
         }
-        const previous = partialPreviousCollection ?? {};
-
         // Read the merged collection once. `cache.getCollectionData()` returns the post-merge
         // frozen object, which is what listeners should see (not the raw `partialCollection`
         // input, which is just the delta and lacks fields preserved during merge).
@@ -198,10 +185,13 @@ class OnyxStore {
         }
 
         // 2. Exact-member subscribers fire per changed key (skip if ref unchanged vs previous).
+        // Only treat a member as unchanged when `previous` actually carries it: when the
+        // previous collection is omitted, a removed member reads `undefined` on both sides
+        // and would otherwise be skipped even though it changed.
         for (const memberKey of changedKeys) {
             const value = collectionData?.[memberKey];
-            const prev = previous[memberKey];
-            if (value === prev) {
+            const prev = partialPreviousCollection?.[memberKey];
+            if (partialPreviousCollection && Object.prototype.hasOwnProperty.call(partialPreviousCollection, memberKey) && value === prev) {
                 continue;
             }
 
@@ -270,12 +260,12 @@ class OnyxStore {
         try {
             fn();
         } catch (error) {
-            Logger.logAlert(`[OnyxStore] Listener threw an error for key '${contextKey}': ${error}`);
+            Logger.logAlert(`[OnyxSubscriptionManager] Listener threw an error for key '${contextKey}': ${error}`);
         }
     }
 }
 
-const onyxStore = new OnyxStore();
+const onyxSubscriptionManager = new OnyxSubscriptionManager();
 
-export default onyxStore;
-export type {KeyListener, StateListenerCallback};
+export default onyxSubscriptionManager;
+export type {Listener, StateListenerCallback};

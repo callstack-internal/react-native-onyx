@@ -7,7 +7,7 @@ import StorageMock from '../../lib/storage';
 import OnyxCache from '../../lib/OnyxCache';
 import OnyxKeys from '../../lib/OnyxKeys';
 import OnyxUtils, {clearOnyxUtilsInternals} from '../../lib/OnyxUtils';
-import onyxStore from '../../lib/OnyxStore';
+import onyxSubscriptionManager from '../../lib/OnyxSubscriptionManager';
 import type GenericCollection from '../utils/GenericCollection';
 import type {OnyxUpdate} from '../../lib/Onyx';
 import type {OnyxEntry, OnyxInputKeyValueMapping, OnyxKey, RetriableOnyxOperation} from '../../lib/types';
@@ -273,7 +273,7 @@ describe('OnyxUtils', () => {
 
     describe('notifyCollection', () => {
         test('one call with 10k heavy objects to update 10k subscribers', async () => {
-            const unsubscribes: Array<() => void> = [];
+            let unsubscribes: Array<() => void> = [];
 
             const changedReportActions = Object.fromEntries(
                 Object.entries(mockedReportActionsMap).map(([k, v]) => [k, createRandomReportAction(Number(v.reportActionID))] as const),
@@ -283,14 +283,14 @@ describe('OnyxUtils', () => {
                 beforeEach: async () => {
                     await Onyx.multiSet(mockedReportActionsMap);
                     for (const key of mockedReportActionsKeys) {
-                        unsubscribes.push(onyxStore.subscribe(key, jest.fn()));
+                        unsubscribes.push(onyxSubscriptionManager.subscribe(key, jest.fn()));
                     }
                 },
                 afterEach: async () => {
                     for (const unsubscribe of unsubscribes) {
                         unsubscribe();
                     }
-                    unsubscribes.length = 0;
+                    unsubscribes = [];
                     await clearOnyxAfterEachMeasure();
                 },
             });
@@ -299,7 +299,7 @@ describe('OnyxUtils', () => {
 
     describe('notifyKey', () => {
         test('one call with one heavy object to update 10k subscribers', async () => {
-            const unsubscribes: Array<() => void> = [];
+            let unsubscribes: Array<() => void> = [];
 
             const key = `${collectionKey}0`;
             const previousReportAction = mockedReportActionsMap[`${collectionKey}0`];
@@ -309,14 +309,14 @@ describe('OnyxUtils', () => {
                 beforeEach: async () => {
                     await Onyx.set(key, previousReportAction);
                     for (let i = 0; i < 10000; i++) {
-                        unsubscribes.push(onyxStore.subscribe(key, jest.fn()));
+                        unsubscribes.push(onyxSubscriptionManager.subscribe(key, jest.fn()));
                     }
                 },
                 afterEach: async () => {
                     for (const unsubscribe of unsubscribes) {
                         unsubscribe();
                     }
-                    unsubscribes.length = 0;
+                    unsubscribes = [];
                     await clearOnyxAfterEachMeasure();
                 },
             });
@@ -482,60 +482,6 @@ describe('OnyxUtils', () => {
     describe('doAllCollectionItemsBelongToSameParent', () => {
         test('one call checking 10k heavy objects', async () => {
             await measureFunction(() => OnyxUtils.doAllCollectionItemsBelongToSameParent(collectionKey, mockedReportActionsKeys));
-        });
-    });
-
-    describe('onyxStore.subscribe', () => {
-        test('one call subscribing to a single key', async () => {
-            let unsubscribe: (() => void) | undefined;
-
-            await measureFunction(
-                () => {
-                    unsubscribe = onyxStore.subscribe(`${collectionKey}0`, jest.fn());
-                },
-                {
-                    beforeEach: async () => {
-                        await StorageMock.multiSet(Object.entries(mockedReportActionsMap).map(([k, v]) => [k, v]));
-                    },
-                    afterEach: async () => {
-                        unsubscribe?.();
-                        await clearOnyxAfterEachMeasure();
-                    },
-                },
-            );
-        });
-
-        test('one call subscribing to a whole collection of 10k heavy objects', async () => {
-            let unsubscribe: (() => void) | undefined;
-
-            await measureFunction(
-                () => {
-                    unsubscribe = onyxStore.subscribe(collectionKey, jest.fn());
-                },
-                {
-                    beforeEach: async () => {
-                        await StorageMock.multiSet(Object.entries(mockedReportActionsMap).map(([k, v]) => [k, v]));
-                    },
-                    afterEach: async () => {
-                        unsubscribe?.();
-                        await clearOnyxAfterEachMeasure();
-                    },
-                },
-            );
-        });
-    });
-
-    describe('onyxStore.subscribe unsubscribe', () => {
-        test('one call', async () => {
-            const key = `${collectionKey}0`;
-            let unsubscribe: (() => void) | undefined;
-
-            await measureFunction(() => unsubscribe?.(), {
-                beforeEach: async () => {
-                    unsubscribe = onyxStore.subscribe(key, jest.fn());
-                },
-                afterEach: clearOnyxAfterEachMeasure,
-            });
         });
     });
 
