@@ -65,7 +65,7 @@ class OnyxSubscriptionManager {
         // touches becomes cached by that write, so we skip it here and avoid a stale storage read
         // racing (and overwriting) those writes.
         Promise.resolve()
-            .then(OnyxUtils.whenWritesSettled)
+            .then(() => OnyxUtils.whenWritesSettledForKey(key))
             .then(() => {
                 if (cache.hasCacheForKey(key)) {
                     this.hydrating.delete(key);

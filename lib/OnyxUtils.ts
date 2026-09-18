@@ -159,6 +159,18 @@ function pendingWritesForKey(key: OnyxKey): Array<Promise<unknown>> {
 }
 
 /**
+ * Resolves once the in-flight writes for `key` have settled, recursing to drain writes issued while
+ * awaiting. Lets hydration avoid reading stale storage while a write to `key` is in flight.
+ */
+function whenWritesSettledForKey(key: OnyxKey): Promise<void> {
+    const relevant = pendingWritesForKey(key);
+    if (relevant.length === 0) {
+        return Promise.resolve();
+    }
+    return Promise.all(relevant.map((promise) => promise.catch(() => undefined))).then(() => whenWritesSettledForKey(key));
+}
+
+/**
  * Defer a `Onyx.connect` callback's initial fire until the writes relevant to `key` that are in
  * flight this tick have applied, so it reads post-write cache and dedups against their notifications.
  * The wait is scoped to `key` and snapshotted after one microtask, so an unrelated or slow write
@@ -1687,6 +1699,7 @@ const OnyxUtils = {
     METHOD,
     NOT_DELIVERED,
     scheduleInitialFire,
+    whenWritesSettledForKey,
     trackPendingWrite,
     trackPendingGlobalWrite,
     getMergeQueue,
