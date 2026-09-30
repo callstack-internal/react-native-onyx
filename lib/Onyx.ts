@@ -30,6 +30,7 @@ import type {
 } from './types';
 import OnyxUtils from './OnyxUtils';
 import OnyxKeys from './OnyxKeys';
+import PendingWrites from './PendingWrites';
 import logMessages from './logMessages';
 import onyxSubscriptionManager from './OnyxSubscriptionManager';
 import OnyxMerge from './OnyxMerge';
@@ -133,7 +134,7 @@ function init({
  * For a collection root key, the callback fires with the entire frozen collection
  * object whenever any member changes; signature `(collection, collectionKey)`.
  * For any other key, the callback fires with the value at that key; signature
- * `(value, key)`. Initial fire is deferred via `scheduleInitialFire` so it reads
+ * `(value, key)`. Initial fire is deferred via `scheduleInitialSubscriberNotification` so it reads
  * cache after any same-tick writes have applied.
  *
  * @param connectOptions The options object that will define the behavior of the connection.
@@ -147,7 +148,7 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
     let active = true;
     let unsubscribeFn: (() => void) | null = null;
 
-    const wireUp = () => {
+    const startSubscription = () => {
         if (!active) {
             return;
         }
@@ -167,7 +168,7 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
             unsubscribeFn = onyxSubscriptionManager.subscribe(key, (value, k) => {
                 deliverCollection(value as unknown as OnyxValue<TKey>, k as TKey);
             });
-            OnyxUtils.scheduleInitialFire(key, () => {
+            PendingWrites.scheduleInitialSubscriberNotification(key, () => {
                 if (!active) {
                     return;
                 }
@@ -188,7 +189,7 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
         unsubscribeFn = onyxSubscriptionManager.subscribe(key, (value, k) => {
             deliverValue(value, k as TKey);
         });
-        OnyxUtils.scheduleInitialFire(key, () => {
+        PendingWrites.scheduleInitialSubscriberNotification(key, () => {
             if (!active) {
                 return;
             }
@@ -197,7 +198,7 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
     };
 
     OnyxUtils.afterInit(() => {
-        wireUp();
+        startSubscription();
         return Promise.resolve();
     });
 
@@ -229,7 +230,7 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
  * For a collection root key, the callback fires with the entire frozen collection
  * object whenever any member changes; signature `(collection, collectionKey)`.
  * For any other key, the callback fires with the value at that key; signature
- * `(value, key)`. Initial fire is deferred via `scheduleInitialFire` so it reads
+ * `(value, key)`. Initial fire is deferred via `scheduleInitialSubscriberNotification` so it reads
  * cache after any same-tick writes have applied.
  *
  * @param connectOptions The options object that will define the behavior of the connection.
@@ -271,7 +272,7 @@ function disconnect(connection: Connection): void {
  * @param options optional configuration object
  */
 function set<TKey extends OnyxKey>(key: TKey, value: OnyxSetInput<TKey>, options?: SetOptions): Promise<void> {
-    return OnyxUtils.trackPendingWrite(
+    return PendingWrites.trackPendingWrite(
         key,
         OnyxUtils.afterInit(() => OnyxUtils.setWithRetry({key, value, options})),
     );
@@ -285,7 +286,7 @@ function set<TKey extends OnyxKey>(key: TKey, value: OnyxSetInput<TKey>, options
  * @param data object keyed by ONYXKEYS and the values to set
  */
 function multiSet(data: OnyxMultiSetInput): Promise<void> {
-    return OnyxUtils.trackPendingWrite(
+    return PendingWrites.trackPendingWrite(
         Object.keys(data),
         OnyxUtils.afterInit(() => OnyxUtils.multiSetWithRetry(data)),
     );
@@ -308,7 +309,7 @@ function multiSet(data: OnyxMultiSetInput): Promise<void> {
  * Onyx.merge(ONYXKEYS.POLICY, {name: 'My Workspace'}); // -> {id: 1, name: 'My Workspace'}
  */
 function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): Promise<void> {
-    return OnyxUtils.trackPendingWrite(
+    return PendingWrites.trackPendingWrite(
         key,
         OnyxUtils.afterInit(() => {
             const skippableCollectionMemberIDs = OnyxUtils.getSkippableCollectionMemberIDs();
@@ -334,24 +335,33 @@ function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): 
                 return mergeQueue[key] ? mergeQueuePromise[key] : Promise.resolve();
             }
 
-            // Merge attempts are batched together. The delta should be applied after a single call to get() to prevent a race condition.
-            // Using the initial value from storage in subsequent merge attempts will lead to an incorrect final merged value.
+            // Merge attempts are batched together. The delta should be applied after a single read of the
+            // existing value to prevent a race condition. Using the initial value from storage in subsequent
+            // merge attempts will lead to an incorrect final merged value.
             if (mergeQueue[key]) {
                 mergeQueue[key].push(changes);
                 return mergeQueuePromise[key];
             }
-            mergeQueue[key] = [changes];
+            const queuedChanges: Array<OnyxValue<OnyxKey>> = [changes];
+            mergeQueue[key] = queuedChanges;
 
-            mergeQueuePromise[key] = OnyxUtils.get(key).then((valueFromGet) => {
+            // Eager hydration means an uncached key has nothing stored, and a storage round trip would land
+            // this write after the same update's cached keys, where subscribers can see a half-applied batch.
+            // A running `Onyx.clear` resets keys, so read what it leaves.
+            const readMergeBase = () => (cache.hasCacheForKey(key) ? (cache.get(key) as OnyxValue<TKey>) : undefined);
+            const pendingClear = cache.getTaskPromise(TASK.CLEAR);
+
+            mergeQueuePromise[key] = (pendingClear ? pendingClear.then(readMergeBase) : Promise.resolve(readMergeBase())).then((valueFromGet) => {
                 // Calls to Onyx.set after a merge will terminate the current merge process and clear the merge queue
-                if (mergeQueue[key] == null) {
+                if (mergeQueue[key] !== queuedChanges) {
                     return Promise.resolve();
                 }
 
                 // Other writers (notably Onyx.update's mergeCollection path, which doesn't participate in mergeQueue)
-                // can land between get() resolving and this callback running. Applying the delta on top of the value
+                // can land between the read above and this callback running. Applying the delta on top of the value
                 // captured back then and broadcasting it would overwrite those writes wholesale, so re-read the cache.
-                const existingValue = cache.hasCacheForKey(key) ? (cache.get(key) as OnyxInput<TKey> | undefined) : valueFromGet;
+                const baseValue = OnyxUtils.hasStaleMergeRead(queuedChanges) ? undefined : valueFromGet;
+                const existingValue = cache.hasCacheForKey(key) ? (cache.get(key) as OnyxInput<TKey> | undefined) : baseValue;
 
                 try {
                     const validChanges = mergeQueue[key].filter((change) => {
@@ -412,7 +422,7 @@ function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): 
  * @param collection Object collection keyed by individual collection member keys and values
  */
 function mergeCollection<TKey extends CollectionKeyBase>(collectionKey: TKey, collection: OnyxMergeCollectionInput<TKey>): Promise<void> {
-    return OnyxUtils.trackPendingWrite(
+    return PendingWrites.trackPendingWrite(
         Object.keys(collection),
         OnyxUtils.afterInit(() => OnyxUtils.mergeCollectionWithPatches({collectionKey, collection})),
     );
@@ -440,8 +450,9 @@ function mergeCollection<TKey extends CollectionKeyBase>(collectionKey: TKey, co
  * @param keysToPreserve is a list of ONYXKEYS that should not be cleared with the rest of the data
  */
 function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
-    return OnyxUtils.trackPendingGlobalWrite(
+    return PendingWrites.trackPendingGlobalWrite(
         OnyxUtils.afterInit(() => {
+            const pendingMergeEntries = OnyxUtils.getPendingMergeEntries(keysToPreserve);
             const defaultKeyStates = OnyxUtils.getDefaultKeyStates();
             const initialKeys = Object.keys(defaultKeyStates);
 
@@ -459,6 +470,8 @@ function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
                     > = {};
 
                     const allKeys = new Set([...cachedKeys, ...initialKeys]);
+
+                    OnyxUtils.cancelPendingMerges(pendingMergeEntries);
 
                     // The only keys that should not be cleared are:
                     // 1. Anything specifically passed in keysToPreserve (because some keys like language preferences, offline
@@ -543,7 +556,7 @@ function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
  * @returns resolves when all operations are complete
  */
 function update<TKey extends OnyxKey>(data: Array<OnyxUpdate<TKey>>): Promise<void> {
-    return OnyxUtils.trackPendingWrite(
+    return PendingWrites.trackPendingWrite(
         // multiSet/collection items keep their keys in `.value`, not `.key`.
         data.flatMap((updateItem) => {
             if (
@@ -713,9 +726,31 @@ function update<TKey extends OnyxKey>(data: Array<OnyxUpdate<TKey>>): Promise<vo
  * @param collection Object collection keyed by individual collection member keys and values
  */
 function setCollection<TKey extends CollectionKeyBase>(collectionKey: TKey, collection: OnyxSetCollectionInput<TKey>): Promise<void> {
-    return OnyxUtils.trackPendingWrite(
+    return PendingWrites.trackPendingWrite(
         Object.keys(collection),
         OnyxUtils.afterInit(() => OnyxUtils.setCollectionWithRetry({collectionKey, collection})),
+    );
+}
+
+/**
+ * Returns persisted Onyx key-value pairs as a plain object.
+ * Live RAM-only values and writes that have not reached storage are not included.
+ * Treat the returned object and its nested values as read-only.
+ */
+function exportState(): Promise<Record<OnyxKey, OnyxValue<OnyxKey>>> {
+    return OnyxUtils.afterInit(() =>
+        Storage.getAll().then((entries) => {
+            const state: Record<OnyxKey, OnyxValue<OnyxKey>> = {};
+
+            for (const [key, value] of entries) {
+                if (OnyxKeys.isRamOnlyKey(key)) {
+                    continue;
+                }
+                state[key] = value;
+            }
+
+            return state;
+        }),
     );
 }
 
@@ -731,6 +766,7 @@ const Onyx = {
     setCollection,
     update,
     clear,
+    exportState,
     init,
     registerLogger: Logger.registerLogger,
 };

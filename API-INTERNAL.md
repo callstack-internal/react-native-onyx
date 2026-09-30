@@ -24,24 +24,6 @@ is reused by every connection.</p>
 <dt><a href="#resetDiskPressureLogThrottle">resetDiskPressureLogThrottle()</a></dt>
 <dd><p>Test-only: clears the disk-pressure log throttle so each test observes its own alert.</p>
 </dd>
-<dt><a href="#trackPendingWrite">trackPendingWrite()</a></dt>
-<dd><p>Registers an in-flight write under each key it can change, so <code>scheduleInitialFire</code> waits only for
-the writes relevant to a connecting key. Returns the same promise so callers can wrap a write&#39;s
-return value inline. The write is deregistered once it settles (success or failure).</p>
-</dd>
-<dt><a href="#trackPendingGlobalWrite">trackPendingGlobalWrite()</a></dt>
-<dd><p>Registers an in-flight write that affects every key (Onyx.clear). Deregistered once it settles.</p>
-</dd>
-<dt><a href="#pendingWritesForKey">pendingWritesForKey()</a></dt>
-<dd><p>In-flight writes that can change the value delivered to a subscriber of <code>key</code>: writes to the key
-itself, writes to any member when <code>key</code> is a collection root, and global writes (clear).</p>
-</dd>
-<dt><a href="#scheduleInitialFire">scheduleInitialFire()</a></dt>
-<dd><p>Defer a <code>Onyx.connect</code> callback&#39;s initial fire until the writes relevant to <code>key</code> that are in
-flight this tick have applied, so it reads post-write cache and dedups against their notifications.
-The wait is scoped to <code>key</code> and snapshotted after one microtask, so an unrelated or slow write
-elsewhere cannot block or postpone this delivery, and writes issued after it do not either.</p>
-</dd>
 <dt><a href="#getMergeQueue">getMergeQueue()</a></dt>
 <dd><p>Getter - returns the merge queue.</p>
 </dd>
@@ -116,6 +98,8 @@ progress or failures storm — the per-operation budget alone cannot stop a sess
 <li>DISK_PRESSURE: the device disk itself is full (or the database files are unreadable), so neither
 retries nor in-DB eviction can free space — the write is dropped (cache stays authoritative) with
 a single throttled alert + quota snapshot per burst.</li>
+<li>UNAVAILABLE: the storage engine does not exist in this environment, so the storage layer has
+already degraded to the in-memory provider. No retry.</li>
 <li>UNKNOWN: the provider couldn&#39;t classify it — log the full error shape (name + message +
 provider) once so it&#39;s visible, then bounded retry without eviction.</li>
 </ul>
@@ -174,6 +158,9 @@ that this internal function allows passing an additional <code>mergeReplaceNullP
 Any existing collection members not included in the new data will not be removed.
 Retries on failure.</p>
 </dd>
+<dt><a href="#resetDeferredInitTask">resetDeferredInitTask()</a></dt>
+<dd><p>Put Onyx back to &quot;not initialised&quot; state, useful for tests that need a cold start.</p>
+</dd>
 <dt><a href="#clearOnyxUtilsInternals">clearOnyxUtilsInternals()</a></dt>
 <dd><p>Clear internal variables used in this file, useful in test environments.</p>
 </dd>
@@ -200,36 +187,6 @@ is reused by every connection.
 
 ## resetDiskPressureLogThrottle()
 Test-only: clears the disk-pressure log throttle so each test observes its own alert.
-
-**Kind**: global function  
-<a name="trackPendingWrite"></a>
-
-## trackPendingWrite()
-Registers an in-flight write under each key it can change, so `scheduleInitialFire` waits only for
-the writes relevant to a connecting key. Returns the same promise so callers can wrap a write's
-return value inline. The write is deregistered once it settles (success or failure).
-
-**Kind**: global function  
-<a name="trackPendingGlobalWrite"></a>
-
-## trackPendingGlobalWrite()
-Registers an in-flight write that affects every key (Onyx.clear). Deregistered once it settles.
-
-**Kind**: global function  
-<a name="pendingWritesForKey"></a>
-
-## pendingWritesForKey()
-In-flight writes that can change the value delivered to a subscriber of `key`: writes to the key
-itself, writes to any member when `key` is a collection root, and global writes (clear).
-
-**Kind**: global function  
-<a name="scheduleInitialFire"></a>
-
-## scheduleInitialFire()
-Defer a `Onyx.connect` callback's initial fire until the writes relevant to `key` that are in
-flight this tick have applied, so it reads post-write cache and dedups against their notifications.
-The wait is scoped to `key` and snapshotted after one microtask, so an unrelated or slow write
-elsewhere cannot block or postpone this delivery, and writes issued after it do not either.
 
 **Kind**: global function  
 <a name="getMergeQueue"></a>
@@ -372,6 +329,8 @@ capacity recovery (eviction) so that a given failure is retried by exactly one l
 - DISK_PRESSURE: the device disk itself is full (or the database files are unreadable), so neither
   retries nor in-DB eviction can free space — the write is dropped (cache stays authoritative) with
   a single throttled alert + quota snapshot per burst.
+- UNAVAILABLE: the storage engine does not exist in this environment, so the storage layer has
+  already degraded to the in-memory provider. No retry.
 - UNKNOWN: the provider couldn't classify it — log the full error shape (name + message +
   provider) once so it's visible, then bounded retry without eviction.
 
@@ -527,6 +486,12 @@ Retries on failure.
 | params.collection | Object collection keyed by individual collection member keys and values |
 | retryAttempt | retry attempt |
 
+<a name="resetDeferredInitTask"></a>
+
+## resetDeferredInitTask()
+Put Onyx back to "not initialised" state, useful for tests that need a cold start.
+
+**Kind**: global function  
 <a name="clearOnyxUtilsInternals"></a>
 
 ## clearOnyxUtilsInternals()

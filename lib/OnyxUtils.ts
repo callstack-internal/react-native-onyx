@@ -5,6 +5,7 @@ import * as Logger from './Logger';
 import type Onyx from './Onyx';
 import cache, {TASK} from './OnyxCache';
 import OnyxKeys from './OnyxKeys';
+import PendingWrites from './PendingWrites';
 import StorageCircuitBreaker from './StorageCircuitBreaker';
 import onyxSubscriptionManager from './OnyxSubscriptionManager';
 import Storage from './storage';
@@ -70,21 +71,15 @@ type PreparedKeyValuePairs = {
 // Key/value store of Onyx key and arrays of values to merge
 let mergeQueue: Record<OnyxKey, Array<OnyxValue<OnyxKey>>> = {};
 let mergeQueuePromise: Record<OnyxKey, Promise<void>> = {};
-
-// In-flight writes tracked per affected key, so a subscriber's initial fire waits only for writes
-// that can change its own value, never for unrelated (or slow) writes elsewhere.
-const pendingWritesByKey = new Map<OnyxKey, Set<Promise<unknown>>>();
-
-// In-flight writes that affect every key (Onyx.clear). Any initial fire waits for these.
-const pendingGlobalWrites = new Set<Promise<unknown>>();
+const mergeQueuesWithStaleRead = new WeakSet<Array<OnyxValue<OnyxKey>>>();
 
 // Optional user-provided key value states set when Onyx initializes or clears
 let defaultKeyStates: Record<OnyxKey, OnyxValue<OnyxKey>> = {};
 
 let snapshotKey: OnyxKey | null = null;
 
-// Connections can be made before `Onyx.init`. They would wait for this task before resolving
-const deferredInitTask = createDeferredTask();
+// Connections can be made before `Onyx.init`. They would wait for this task before resolving.
+let deferredInitTask = createDeferredTask();
 
 /**
  * Sentinel for "nothing delivered yet" in `connect()`'s per-subscription dedup. A Symbol
@@ -95,85 +90,6 @@ const deferredInitTask = createDeferredTask();
  */
 // eslint-disable-next-line rulesdir/no-negated-variables
 const NOT_DELIVERED = Symbol('NOT_DELIVERED');
-
-/**
- * Registers an in-flight write under each key it can change, so `scheduleInitialFire` waits only for
- * the writes relevant to a connecting key. Returns the same promise so callers can wrap a write's
- * return value inline. The write is deregistered once it settles (success or failure).
- */
-function trackPendingWrite<T>(keys: OnyxKey | OnyxKey[], promise: Promise<T>): Promise<T> {
-    // Drop nullish keys (e.g. a keyless `clear` item) so they never reach `pendingWritesForKey`'s scan.
-    const keyList = (Array.isArray(keys) ? keys : [keys]).filter((key) => typeof key === 'string');
-    for (const key of keyList) {
-        let set = pendingWritesByKey.get(key);
-        if (!set) {
-            set = new Set();
-            pendingWritesByKey.set(key, set);
-        }
-        set.add(promise);
-    }
-    const deregister = () => {
-        for (const key of keyList) {
-            const set = pendingWritesByKey.get(key);
-            if (!set) {
-                continue;
-            }
-            set.delete(promise);
-            if (set.size === 0) {
-                pendingWritesByKey.delete(key);
-            }
-        }
-    };
-    promise.then(deregister, deregister);
-    return promise;
-}
-
-/**
- * Registers an in-flight write that affects every key (Onyx.clear). Deregistered once it settles.
- */
-function trackPendingGlobalWrite<T>(promise: Promise<T>): Promise<T> {
-    pendingGlobalWrites.add(promise);
-    const deregister = () => pendingGlobalWrites.delete(promise);
-    promise.then(deregister, deregister);
-    return promise;
-}
-
-/**
- * In-flight writes that can change the value delivered to a subscriber of `key`: writes to the key
- * itself, writes to any member when `key` is a collection root, and global writes (clear).
- */
-function pendingWritesForKey(key: OnyxKey): Array<Promise<unknown>> {
-    const promises = [...pendingGlobalWrites];
-    const own = pendingWritesByKey.get(key);
-    if (own) {
-        promises.push(...own);
-    }
-    if (OnyxKeys.isCollectionKey(key)) {
-        for (const [writeKey, set] of pendingWritesByKey) {
-            if (writeKey !== key && OnyxKeys.isCollectionMemberKey(key, writeKey)) {
-                promises.push(...set);
-            }
-        }
-    }
-    return promises;
-}
-
-/**
- * Defer a `Onyx.connect` callback's initial fire until the writes relevant to `key` that are in
- * flight this tick have applied, so it reads post-write cache and dedups against their notifications.
- * The wait is scoped to `key` and snapshotted after one microtask, so an unrelated or slow write
- * elsewhere cannot block or postpone this delivery, and writes issued after it do not either.
- */
-function scheduleInitialFire(key: OnyxKey, fn: () => void): void {
-    Promise.resolve().then(() => {
-        const relevant = pendingWritesForKey(key);
-        if (relevant.length === 0) {
-            fn();
-            return;
-        }
-        Promise.all(relevant.map((promise) => promise.catch(() => undefined))).then(fn);
-    });
-}
 
 // Collection member IDs that Onyx should silently ignore across all operations — reads, writes, cache, and subscriber
 // notifications. This is used to filter out keys formed from invalid/default IDs (e.g. "-1", "0",
@@ -659,6 +575,8 @@ function reportStorageQuota(error?: Error): Promise<void> {
  * - DISK_PRESSURE: the device disk itself is full (or the database files are unreadable), so neither
  *   retries nor in-DB eviction can free space — the write is dropped (cache stays authoritative) with
  *   a single throttled alert + quota snapshot per burst.
+ * - UNAVAILABLE: the storage engine does not exist in this environment, so the storage layer has
+ *   already degraded to the in-memory provider. No retry.
  * - UNKNOWN: the provider couldn't classify it — log the full error shape (name + message +
  *   provider) once so it's visible, then bounded retry without eviction.
  */
@@ -706,6 +624,15 @@ function retryOperation<TMethod extends RetriableOnyxOperation>(
 
     if (errorClass === StorageErrorClass.TRANSIENT || errorClass === StorageErrorClass.FATAL) {
         Logger.logInfo(`Storage operation skipped retry; ${errorClass} errors are handled by the connection layer. Error: ${error}. onyxMethod: ${onyxMethod.name}.`);
+        return Promise.resolve();
+    }
+
+    // UNAVAILABLE: there is no storage engine in this environment. The storage layer has already swapped
+    // in the in-memory provider, so the write's data is not lost.
+    if (errorClass === StorageErrorClass.UNAVAILABLE) {
+        Logger.logInfo(
+            `Storage operation skipped retry; the storage engine is unavailable and the storage layer has degraded to memory-only. Error: ${error}. onyxMethod: ${onyxMethod.name}.`,
+        );
         return Promise.resolve();
     }
 
@@ -777,6 +704,61 @@ function broadcastUpdate<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>
 
 function hasPendingMergeForKey(key: OnyxKey): boolean {
     return !!mergeQueue[key];
+}
+
+function cancelPendingMergesForKey(key: OnyxKey): void {
+    delete mergeQueue[key];
+    delete mergeQueuePromise[key];
+}
+
+function cancelPendingMergesForCollection(collectionKey: CollectionKeyBase): void {
+    for (const key of Object.keys(mergeQueue)) {
+        if (!OnyxKeys.isCollectionMemberKey(collectionKey, key)) {
+            continue;
+        }
+        cancelPendingMergesForKey(key);
+    }
+}
+
+type PendingMergeEntry = [OnyxKey, Array<OnyxValue<OnyxKey>>, number];
+
+function getPendingMergeEntries(keysToPreserve: OnyxKey[]): PendingMergeEntry[] {
+    return Object.entries(mergeQueue)
+        .filter(([key]) => !keysToPreserve.some((preserveKey) => OnyxKeys.isKeyMatch(preserveKey, key)))
+        .map(([key, queuedChanges]) => [key, queuedChanges, queuedChanges.length]);
+}
+
+function cancelPendingMerges(entries: PendingMergeEntry[]): void {
+    for (const [key, queuedChanges, capturedLength] of entries) {
+        if (mergeQueue[key] !== queuedChanges) {
+            continue;
+        }
+        if (queuedChanges.length === capturedLength) {
+            cancelPendingMergesForKey(key);
+            continue;
+        }
+        queuedChanges.splice(0, capturedLength);
+        mergeQueuesWithStaleRead.add(queuedChanges);
+    }
+}
+
+function hasStaleMergeRead(queuedChanges: Array<OnyxValue<OnyxKey>>): boolean {
+    return mergeQueuesWithStaleRead.has(queuedChanges);
+}
+
+function cancelPendingMergesForKeys(keys: OnyxKey[]): void {
+    for (const key of keys) {
+        cancelPendingMergesForKey(key);
+    }
+}
+
+function cancelPendingMergesForNullMembers(collection: OnyxInputKeyValueMapping): void {
+    for (const [key, value] of Object.entries(collection)) {
+        if (value !== null) {
+            continue;
+        }
+        cancelPendingMergesForKey(key);
+    }
 }
 
 /**
@@ -1190,6 +1172,10 @@ function multiSetWithRetry(data: OnyxMultiSetInput, retryAttempt?: number): Prom
 
     const {pairs: keyValuePairsToSet, keysToRemove: removalCandidates} = OnyxUtils.prepareKeyValuePairsForStorage(newData, true);
 
+    if (!retryAttempt) {
+        cancelPendingMergesForKeys(removalCandidates);
+    }
+
     // Removals of keys that are neither cached nor persisted are no-ops and skipped. When the key
     // index has not been loaded yet (empty set), keep the removal to be safe.
     const persistedKeys = cache.getAllKeys();
@@ -1332,6 +1318,10 @@ function setCollectionWithRetry<TKey extends CollectionKeyBase>({collectionKey, 
     }
     resultCollectionKeys = Object.keys(resultCollection);
 
+    if (!retryAttempt) {
+        cancelPendingMergesForCollection(collectionKey);
+    }
+
     return OnyxUtils.getAllKeys().then((persistedKeys) => {
         const mutableCollection: OnyxInputKeyValueMapping = {...resultCollection};
 
@@ -1432,6 +1422,10 @@ function mergeCollectionWithPatches<TKey extends CollectionKeyBase>(
         }, {});
     }
     resultCollectionKeys = Object.keys(resultCollection);
+
+    if (!retryAttempt) {
+        cancelPendingMergesForNullMembers(resultCollection);
+    }
 
     return getAllKeys()
         .then((persistedKeys) => {
@@ -1623,6 +1617,10 @@ function partialSetCollection<TKey extends CollectionKeyBase>({collectionKey, co
     }
     resultCollectionKeys = Object.keys(resultCollection);
 
+    if (!retryAttempt) {
+        cancelPendingMergesForKeys(resultCollectionKeys);
+    }
+
     return getAllKeys().then((persistedKeys) => {
         const mutableCollection: OnyxInputKeyValueMapping = {...resultCollection};
         const existingKeys = resultCollectionKeys.filter((key) => persistedKeys.has(key));
@@ -1674,21 +1672,24 @@ function logKeyRemoved(onyxMethod: Extract<OnyxMethod, 'set' | 'merge'>, key: On
 }
 
 /**
+ * Put Onyx back to "not initialised" state, useful for tests that need a cold start.
+ */
+function resetDeferredInitTask() {
+    deferredInitTask = createDeferredTask();
+}
+
+/**
  * Clear internal variables used in this file, useful in test environments.
  */
 function clearOnyxUtilsInternals() {
     mergeQueue = {};
     mergeQueuePromise = {};
-    pendingWritesByKey.clear();
-    pendingGlobalWrites.clear();
+    PendingWrites.clearPendingWrites();
 }
 
 const OnyxUtils = {
     METHOD,
     NOT_DELIVERED,
-    scheduleInitialFire,
-    trackPendingWrite,
-    trackPendingGlobalWrite,
     getMergeQueue,
     getMergeQueuePromise,
     getDefaultKeyStates,
@@ -1707,6 +1708,9 @@ const OnyxUtils = {
     retryOperation,
     broadcastUpdate,
     hasPendingMergeForKey,
+    getPendingMergeEntries,
+    cancelPendingMerges,
+    hasStaleMergeRead,
     prepareKeyValuePairsForStorage,
     mergeChanges,
     mergeAndMarkChanges,
@@ -1733,4 +1737,4 @@ const OnyxUtils = {
 
 export type {OnyxMethod};
 export default OnyxUtils;
-export {clearOnyxUtilsInternals};
+export {clearOnyxUtilsInternals, resetDeferredInitTask};

@@ -65,6 +65,45 @@ describe('Onyx', () => {
         return Onyx.clear();
     });
 
+    describe('exportState', () => {
+        it('exports persisted values without current RAM-only values', async () => {
+            await Onyx.set(ONYX_KEYS.TEST_KEY, {nested: 'value'});
+            await Onyx.set(ONYX_KEYS.RAM_ONLY_TEST_KEY, 'not persisted');
+
+            const state = await Onyx.exportState();
+
+            expect(state[ONYX_KEYS.TEST_KEY]).toEqual({nested: 'value'});
+            expect(state).not.toHaveProperty(ONYX_KEYS.RAM_ONLY_TEST_KEY);
+        });
+
+        it('exports persisted collection members', async () => {
+            const collectionMemberKey = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+            await Onyx.set(collectionMemberKey, {nested: 'value'});
+
+            const state = await Onyx.exportState();
+
+            expect(state[collectionMemberKey]).toEqual({nested: 'value'});
+        });
+
+        it('propagates storage read failures', async () => {
+            const error = new Error('Storage read failed');
+            jest.mocked(StorageMock.getAll).mockRejectedValueOnce(error);
+
+            await expect(Onyx.exportState()).rejects.toBe(error);
+        });
+
+        it('excludes stale persisted RAM-only values', async () => {
+            const staleCollectionMember = `${ONYX_KEYS.COLLECTION.RAM_ONLY_COLLECTION}1`;
+            jest.mocked(StorageMock.getAll).mockResolvedValueOnce([
+                [ONYX_KEYS.TEST_KEY, 'persisted'],
+                [ONYX_KEYS.RAM_ONLY_TEST_KEY, 'stale'],
+                [staleCollectionMember, 'stale collection member'],
+            ]);
+
+            await expect(Onyx.exportState()).resolves.toEqual({[ONYX_KEYS.TEST_KEY]: 'persisted'});
+        });
+    });
+
     it('should remove key value from OnyxCache/Storage when set is called with null value', () =>
         Onyx.set(ONYX_KEYS.OTHER_TEST, 42)
             .then(() => OnyxUtils.getAllKeys())
@@ -2753,6 +2792,404 @@ describe('Onyx', () => {
                 expect(cache.get(member1)).toEqual({itemA: {childID: '1'}});
                 expect(await StorageMock.getItem(member1)).toEqual({itemA: {childID: '1'}});
             });
+
+            it('should keep the key deleted when a pending merge read resolves after Onyx.update deleted it', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+                const member2 = `${ONYX_KEYS.COLLECTION.TEST_KEY}2`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a', stale: 'SHOULD BE GONE'}});
+                await Onyx.merge(member2, {itemB: {id: 'b'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(member1));
+
+                // Park merge()'s read so the deletion below is guaranteed to land first.
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => staleValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {childID: '1'}});
+
+                // Two keys of the same collection, so the removal goes through partialSetCollection.
+                await Onyx.update([
+                    {onyxMethod: Onyx.METHOD.MERGE, key: member1, value: null},
+                    {onyxMethod: Onyx.METHOD.MERGE, key: member2, value: {itemB: {touched: true}}},
+                ]);
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toBeUndefined();
+                expect(await StorageMock.getItem(member1)).toBeNull();
+            });
+
+            it('should keep the key deleted when a pending merge read resolves after mergeCollection deleted it', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+                const member2 = `${ONYX_KEYS.COLLECTION.TEST_KEY}2`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a', stale: 'SHOULD BE GONE'}});
+                await Onyx.merge(member2, {itemB: {id: 'b'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(member1));
+
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => staleValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {childID: '1'}});
+
+                await Onyx.mergeCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
+                    [member1]: null,
+                    [member2]: {itemB: {touched: true}},
+                } as GenericCollection);
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toBeUndefined();
+                expect(await StorageMock.getItem(member1)).toBeNull();
+            });
+
+            it('should keep the key deleted when a pending merge read resolves after setCollection dropped it', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+                const member2 = `${ONYX_KEYS.COLLECTION.TEST_KEY}2`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a', stale: 'SHOULD BE GONE'}});
+                await Onyx.merge(member2, {itemB: {id: 'b'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(member1));
+
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => staleValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {childID: '1'}});
+
+                // member1 is omitted, so setCollection removes it via cache.drop.
+                await Onyx.setCollection(ONYX_KEYS.COLLECTION.TEST_KEY, {
+                    [member2]: {itemB: {id: 'b'}},
+                } as GenericCollection);
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toBeUndefined();
+                expect(await StorageMock.getItem(member1)).toBeNull();
+            });
+
+            it('should not resurrect pre-deletion data when a merge is queued after the key was removed', async () => {
+                const testKey = ONYX_KEYS.TEST_KEY;
+
+                await Onyx.merge(testKey, {itemA: {id: 'a', stale: 'SHOULD BE GONE'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(testKey));
+
+                // Park both merges' reads independently so the first read can resolve while the
+                // second merge is still queued.
+                const firstGet = createDeferredTask();
+                const secondGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                let getCallCount = 0;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) => {
+                    if (key !== testKey) {
+                        return originalGet(key);
+                    }
+                    getCallCount += 1;
+                    return getCallCount === 1 ? firstGet.promise.then(() => staleValue) : secondGet.promise.then(() => originalGet(key));
+                }) as typeof OnyxUtils.get);
+
+                const firstMergePromise = Onyx.merge(testKey, {itemA: {childID: '1'}});
+                await Onyx.set(testKey, null);
+                const secondMergePromise = Onyx.merge(testKey, {itemA: {childID: '2'}});
+                await waitForPromisesToResolve();
+
+                firstGet.resolve();
+                await waitForPromisesToResolve();
+                secondGet.resolve();
+                await Promise.all([firstMergePromise, secondMergePromise]);
+                await waitForPromisesToResolve();
+
+                expect(cache.get(testKey)).toEqual({itemA: {childID: '2'}});
+                expect(await StorageMock.getItem(testKey)).toEqual({itemA: {childID: '2'}});
+            });
+
+            it('should keep the key deleted when a single-key Onyx.update removal lands during a pending merge', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a', stale: 'SHOULD BE GONE'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(member1));
+
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => staleValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {childID: '1'}});
+
+                // A single collection key stays out of the batched collection paths and goes through set.
+                await Onyx.update([{onyxMethod: Onyx.METHOD.MERGE, key: member1, value: null}]);
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toBeUndefined();
+                expect(await StorageMock.getItem(member1)).toBeNull();
+            });
+
+            it('should keep the key deleted when a pending merge read resolves after multiSet removed it', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+                const member2 = `${ONYX_KEYS.COLLECTION.TEST_KEY}2`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a', stale: 'SHOULD BE GONE'}});
+                await Onyx.merge(member2, {itemB: {id: 'b'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(member1));
+
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => staleValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {childID: '1'}});
+
+                await Onyx.multiSet({[member1]: null, [member2]: {itemB: {touched: true}}});
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toBeUndefined();
+                expect(await StorageMock.getItem(member1)).toBeNull();
+                expect(cache.get(member2)).toEqual({itemB: {touched: true}});
+            });
+        });
+
+        describe('concurrency with Onyx.clear', () => {
+            afterEach(() => {
+                jest.restoreAllMocks();
+            });
+
+            it('should keep the key cleared when a pending merge read resolves after Onyx.clear() removed it', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a', stale: 'SHOULD BE GONE'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(member1));
+
+                // Park merge()'s read so the clear below is guaranteed to land first.
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => staleValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {childID: '1'}});
+
+                await Onyx.clear();
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toBeUndefined();
+                expect(await StorageMock.getItem(member1)).toBeNull();
+            });
+
+            it('should still apply a pending merge for a key passed to Onyx.clear() in keysToPreserve', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a'}});
+                await waitForPromisesToResolve();
+
+                const preservedValue = lodashCloneDeep(cache.get(member1));
+
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => preservedValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {childID: '1'}});
+
+                await Onyx.clear([member1]);
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toEqual({itemA: {id: 'a', childID: '1'}});
+                expect(await StorageMock.getItem(member1)).toEqual({itemA: {id: 'a', childID: '1'}});
+            });
+
+            it('should not cancel a merge that was queued after Onyx.clear() was called', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+
+                const firstGet = createDeferredTask();
+                const secondGet = createDeferredTask();
+                const deferredGets = [firstGet, secondGet];
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) => {
+                    if (key !== member1) {
+                        return originalGet(key);
+                    }
+                    const deferred = deferredGets.shift();
+                    return deferred ? deferred.promise.then(() => undefined) : originalGet(key);
+                }) as typeof OnyxUtils.get);
+
+                const deferredGetAllKeys = createDeferredTask();
+                const originalGetAllKeys = OnyxUtils.getAllKeys;
+                let shouldParkGetAllKeys = true;
+                jest.spyOn(OnyxUtils, 'getAllKeys').mockImplementation((() => {
+                    if (!shouldParkGetAllKeys) {
+                        return originalGetAllKeys();
+                    }
+                    shouldParkGetAllKeys = false;
+                    return deferredGetAllKeys.promise.then(() => originalGetAllKeys());
+                }) as typeof OnyxUtils.getAllKeys);
+
+                const firstMergePromise = Onyx.merge(member1, {itemA: {id: 'a'}});
+                const clearPromise = Onyx.clear();
+                await waitForPromisesToResolve();
+
+                firstGet.resolve();
+                await firstMergePromise;
+                await waitForPromisesToResolve();
+
+                const secondMergePromise = Onyx.merge(member1, {itemB: {id: 'b'}});
+                await waitForPromisesToResolve();
+
+                deferredGetAllKeys.resolve();
+                await clearPromise;
+                await waitForPromisesToResolve();
+
+                secondGet.resolve();
+                await secondMergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toEqual({itemB: {id: 'b'}});
+                expect(await StorageMock.getItem(member1)).toEqual({itemB: {id: 'b'}});
+            });
+
+            it('should keep a merge appended to an in-flight queue after Onyx.clear() was called', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a', stale: 'SHOULD BE GONE'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(member1));
+
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => staleValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const deferredGetAllKeys = createDeferredTask();
+                const originalGetAllKeys = OnyxUtils.getAllKeys;
+                let shouldParkGetAllKeys = true;
+                jest.spyOn(OnyxUtils, 'getAllKeys').mockImplementation((() => {
+                    if (!shouldParkGetAllKeys) {
+                        return originalGetAllKeys();
+                    }
+                    shouldParkGetAllKeys = false;
+                    return deferredGetAllKeys.promise.then(() => originalGetAllKeys());
+                }) as typeof OnyxUtils.getAllKeys);
+
+                const firstMergePromise = Onyx.merge(member1, {itemA: {childID: '1'}});
+                const clearPromise = Onyx.clear();
+                await waitForPromisesToResolve();
+
+                const secondMergePromise = Onyx.merge(member1, {itemB: {id: 'b'}});
+
+                deferredGetAllKeys.resolve();
+                await clearPromise;
+
+                deferredGet.resolve();
+                await Promise.all([firstMergePromise, secondMergePromise]);
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toEqual({itemB: {id: 'b'}});
+                expect(await StorageMock.getItem(member1)).toEqual({itemB: {id: 'b'}});
+            });
+
+            it('should cancel a merge queued before Onyx.clear() when both are called before Onyx is initialized', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+
+                const initGate = createDeferredTask();
+                jest.spyOn(OnyxUtils, 'afterInit').mockImplementation((<T>(action: () => Promise<T>) => initGate.promise.then(action)) as typeof OnyxUtils.afterInit);
+
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) => (key === member1 ? deferredGet.promise.then(() => undefined) : originalGet(key))) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {stale: 'SHOULD BE GONE'}});
+                const clearPromise = Onyx.clear();
+
+                initGate.resolve();
+                await clearPromise;
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toBeUndefined();
+                expect(await StorageMock.getItem(member1)).toBeNull();
+            });
+        });
+
+        describe('concurrency with Onyx.update', () => {
+            afterEach(() => {
+                jest.restoreAllMocks();
+            });
+
+            it('should drop a pending merge when Onyx.update batches set operations for the same collection', async () => {
+                const member1 = `${ONYX_KEYS.COLLECTION.TEST_KEY}1`;
+                const member2 = `${ONYX_KEYS.COLLECTION.TEST_KEY}2`;
+
+                await Onyx.merge(member1, {itemA: {id: 'a'}});
+                await waitForPromisesToResolve();
+
+                const staleValue = lodashCloneDeep(cache.get(member1));
+
+                const deferredGet = createDeferredTask();
+                const originalGet = OnyxUtils.get;
+                jest.spyOn(OnyxUtils, 'get').mockImplementation(((key: OnyxKey) =>
+                    key === member1 ? deferredGet.promise.then(() => staleValue) : originalGet(key)) as typeof OnyxUtils.get);
+
+                const mergePromise = Onyx.merge(member1, {itemA: {stale: 'SHOULD BE GONE'}});
+
+                await Onyx.update([
+                    {onyxMethod: 'set', key: member1, value: {itemB: {id: 'b'}}},
+                    {onyxMethod: 'set', key: member2, value: {itemC: {id: 'c'}}},
+                ]);
+                await waitForPromisesToResolve();
+
+                deferredGet.resolve();
+                await mergePromise;
+                await waitForPromisesToResolve();
+
+                expect(cache.get(member1)).toEqual({itemB: {id: 'b'}});
+                expect(await StorageMock.getItem(member1)).toEqual({itemB: {id: 'b'}});
+            });
         });
     });
 
@@ -3371,6 +3808,20 @@ describe('Onyx.init', () => {
             await act(async () => waitForPromisesToResolve());
 
             expect(cache.get(`${ONYX_KEYS.COLLECTION.TEST_KEY}entry1`)).toEqual('test_1');
+        });
+
+        it('exportState', async () => {
+            await StorageMock.setItem(ONYX_KEYS.TEST_KEY, 'persisted');
+            jest.mocked(StorageMock.getAll).mockClear();
+
+            const exportPromise = Onyx.exportState();
+            await act(async () => waitForPromisesToResolve());
+
+            expect(StorageMock.getAll).not.toHaveBeenCalled();
+
+            Onyx.init({keys: ONYX_KEYS});
+
+            await expect(exportPromise).resolves.toEqual({[ONYX_KEYS.TEST_KEY]: 'persisted'});
         });
     });
 });
