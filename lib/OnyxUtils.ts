@@ -71,7 +71,6 @@ type PreparedKeyValuePairs = {
 // Key/value store of Onyx key and arrays of values to merge
 let mergeQueue: Record<OnyxKey, Array<OnyxValue<OnyxKey>>> = {};
 let mergeQueuePromise: Record<OnyxKey, Promise<void>> = {};
-const mergeQueuesWithStaleRead = new WeakSet<Array<OnyxValue<OnyxKey>>>();
 
 // Optional user-provided key value states set when Onyx initializes or clears
 let defaultKeyStates: Record<OnyxKey, OnyxValue<OnyxKey>> = {};
@@ -738,12 +737,7 @@ function cancelPendingMerges(entries: PendingMergeEntry[]): void {
             continue;
         }
         queuedChanges.splice(0, capturedLength);
-        mergeQueuesWithStaleRead.add(queuedChanges);
     }
-}
-
-function hasStaleMergeRead(queuedChanges: Array<OnyxValue<OnyxKey>>): boolean {
-    return mergeQueuesWithStaleRead.has(queuedChanges);
 }
 
 function cancelPendingMergesForKeys(keys: OnyxKey[]): void {
@@ -1710,7 +1704,6 @@ const OnyxUtils = {
     hasPendingMergeForKey,
     getPendingMergeEntries,
     cancelPendingMerges,
-    hasStaleMergeRead,
     prepareKeyValuePairsForStorage,
     mergeChanges,
     mergeAndMarkChanges,

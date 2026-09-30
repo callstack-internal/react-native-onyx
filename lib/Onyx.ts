@@ -345,23 +345,24 @@ function merge<TKey extends OnyxKey>(key: TKey, changes: OnyxMergeInput<TKey>): 
             const queuedChanges: Array<OnyxValue<OnyxKey>> = [changes];
             mergeQueue[key] = queuedChanges;
 
-            // Eager hydration means an uncached key has nothing stored, and a storage round trip would land
-            // this write after the same update's cached keys, where subscribers can see a half-applied batch.
-            // A running `Onyx.clear` resets keys, so read what it leaves.
-            const readMergeBase = () => (cache.hasCacheForKey(key) ? (cache.get(key) as OnyxValue<TKey>) : undefined);
-            const pendingClear = cache.getTaskPromise(TASK.CLEAR);
+            // An in-flight `Onyx.clear` is about to reset this key, so the delta has to be applied on top of what the
+            // clear leaves behind, and its write has to land after the clear's. Re-check after waiting, because a
+            // second clear can start while the first is settling.
+            const afterPendingClear = (): Promise<void> => {
+                const pendingClear = cache.getTaskPromise(TASK.CLEAR);
+                return pendingClear ? pendingClear.then(afterPendingClear) : Promise.resolve();
+            };
 
-            mergeQueuePromise[key] = (pendingClear ? pendingClear.then(readMergeBase) : Promise.resolve(readMergeBase())).then((valueFromGet) => {
+            mergeQueuePromise[key] = afterPendingClear().then(() => {
                 // Calls to Onyx.set after a merge will terminate the current merge process and clear the merge queue
                 if (mergeQueue[key] !== queuedChanges) {
                     return Promise.resolve();
                 }
 
-                // Other writers (notably Onyx.update's mergeCollection path, which doesn't participate in mergeQueue)
-                // can land between the read above and this callback running. Applying the delta on top of the value
-                // captured back then and broadcasting it would overwrite those writes wholesale, so re-read the cache.
-                const baseValue = OnyxUtils.hasStaleMergeRead(queuedChanges) ? undefined : valueFromGet;
-                const existingValue = cache.hasCacheForKey(key) ? (cache.get(key) as OnyxInput<TKey> | undefined) : baseValue;
+                // Eager hydration means an uncached key has nothing stored, so the base comes from the cache. Reading
+                // it here rather than when the merge was queued means other writers (notably `Onyx.update`'s
+                // mergeCollection path, which doesn't participate in mergeQueue) can't be overwritten wholesale.
+                const existingValue = cache.hasCacheForKey(key) ? (cache.get(key) as OnyxInput<TKey> | undefined) : undefined;
 
                 try {
                     const validChanges = mergeQueue[key].filter((change) => {
