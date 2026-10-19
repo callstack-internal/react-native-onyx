@@ -3,7 +3,6 @@ import type {CollectionKeyBase, KeyValueMapping, OnyxCollection, OnyxKey, OnyxVa
 import * as Logger from './Logger';
 import cache from './OnyxCache';
 import OnyxKeys from './OnyxKeys';
-import * as SelectorStats from './selectorStats';
 
 /**
  * Listener fired when an exact key's value changes.
@@ -80,25 +79,11 @@ class OnyxSubscriptionManager {
      *      listeners for the parent collection.
      */
     notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>): void {
-        if (!SelectorStats.isTimingEnabled()) {
-            this.notifyKeyImpl(key, value);
-            return;
-        }
-        const start = SelectorStats.now();
-        SelectorStats.enterDispatch();
-        const count = this.notifyKeyImpl(key, value);
-        SelectorStats.exitDispatch();
-        SelectorStats.measureDispatch(key, 'key', count, SelectorStats.now() - start);
-    }
-
-    private notifyKeyImpl<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>): number {
-        let count = 0;
         // 1. Exact-key listeners
         const exact = this.keyListeners.get(key);
         if (exact && exact.size > 0) {
             for (const listener of [...exact]) {
-                count++;
-                this.safeInvoke(() => listener(value, key), key, listener);
+                this.safeInvoke(() => listener(value, key), key);
             }
         }
 
@@ -112,12 +97,10 @@ class OnyxSubscriptionManager {
             if (collectionListeners && collectionListeners.size > 0) {
                 const collectionData = cache.getCollectionData(collectionKey);
                 for (const listener of [...collectionListeners]) {
-                    count++;
-                    this.safeInvoke(() => listener(collectionData, collectionKey), collectionKey, listener);
+                    this.safeInvoke(() => listener(collectionData, collectionKey), collectionKey);
                 }
             }
         }
-        return count;
     }
 
     /**
@@ -133,26 +116,9 @@ class OnyxSubscriptionManager {
         partialCollection: OnyxCollection<KeyValueMapping[TKey]>,
         partialPreviousCollection?: OnyxCollection<KeyValueMapping[TKey]>,
     ): void {
-        if (!SelectorStats.isTimingEnabled()) {
-            this.notifyCollectionImpl(collectionKey, partialCollection, partialPreviousCollection);
-            return;
-        }
-        const start = SelectorStats.now();
-        SelectorStats.enterDispatch();
-        const count = this.notifyCollectionImpl(collectionKey, partialCollection, partialPreviousCollection);
-        SelectorStats.exitDispatch();
-        SelectorStats.measureDispatch(collectionKey, 'collection', count, SelectorStats.now() - start);
-    }
-
-    private notifyCollectionImpl<TKey extends CollectionKeyBase>(
-        collectionKey: TKey,
-        partialCollection: OnyxCollection<KeyValueMapping[TKey]>,
-        partialPreviousCollection?: OnyxCollection<KeyValueMapping[TKey]>,
-    ): number {
-        let count = 0;
         const changedKeys = Object.keys(partialCollection ?? {});
         if (changedKeys.length === 0) {
-            return 0;
+            return;
         }
         // Read the merged collection once. `cache.getCollectionData()` returns the post-merge
         // frozen object, which is what listeners should see (not the raw `partialCollection`
@@ -163,8 +129,7 @@ class OnyxSubscriptionManager {
         const collectionListeners = this.keyListeners.get(collectionKey);
         if (collectionListeners && collectionListeners.size > 0) {
             for (const listener of [...collectionListeners]) {
-                count++;
-                this.safeInvoke(() => listener(collectionData, collectionKey), collectionKey, listener);
+                this.safeInvoke(() => listener(collectionData, collectionKey), collectionKey);
             }
         }
 
@@ -185,11 +150,9 @@ class OnyxSubscriptionManager {
             }
 
             for (const listener of [...exact]) {
-                count++;
-                this.safeInvoke(() => listener(value, memberKey), memberKey, listener);
+                this.safeInvoke(() => listener(value, memberKey), memberKey);
             }
         }
-        return count;
     }
 
     /**
@@ -218,14 +181,9 @@ class OnyxSubscriptionManager {
     /**
      * Runs a listener, catching and logging any throw so one failing listener can't stop the rest.
      */
-    private safeInvoke(fn: () => void, contextKey: OnyxKey, listener?: object): void {
-        const timed = listener !== undefined && SelectorStats.isTimingEnabled();
-        const start = timed ? SelectorStats.now() : 0;
+    private safeInvoke(fn: () => void, contextKey: OnyxKey): void {
         try {
             fn();
-            if (timed) {
-                SelectorStats.measureListener(contextKey, listener, SelectorStats.now() - start);
-            }
         } catch (error) {
             Logger.logAlert(`[OnyxSubscriptionManager] Listener threw an error for key '${contextKey}': ${error}`);
         }
