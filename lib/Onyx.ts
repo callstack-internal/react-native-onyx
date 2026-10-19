@@ -30,6 +30,7 @@ import type {
 } from './types';
 import OnyxUtils from './OnyxUtils';
 import OnyxKeys from './OnyxKeys';
+import * as SelectorStats from './selectorStats';
 import PendingWrites from './PendingWrites';
 import logMessages from './logMessages';
 import onyxSubscriptionManager from './OnyxSubscriptionManager';
@@ -165,9 +166,12 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
                 lastDeliveredCollection = rawCollection;
                 (callback as CollectionConnectCallback<TKey> | undefined)?.(rawCollection as NonNullable<OnyxCollection<KeyValueMapping[TKey]>>, k);
             };
-            unsubscribeFn = onyxSubscriptionManager.subscribe(key, (value, k) => {
-                deliverCollection(value as unknown as OnyxValue<TKey>, k as TKey);
-            });
+            unsubscribeFn = onyxSubscriptionManager.subscribe(
+                key,
+                SelectorStats.tagListener((value: unknown, k: OnyxKey) => {
+                    deliverCollection(value as unknown as OnyxValue<TKey>, k as TKey);
+                }, 'connect'),
+            );
             PendingWrites.scheduleInitialSubscriberNotification(key, () => {
                 if (!active) {
                     return;
@@ -186,9 +190,12 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
             lastDelivered = value;
             (callback as DefaultConnectCallback<TKey> | undefined)?.(value, k as TKey);
         };
-        unsubscribeFn = onyxSubscriptionManager.subscribe(key, (value, k) => {
-            deliverValue(value, k as TKey);
-        });
+        unsubscribeFn = onyxSubscriptionManager.subscribe(
+            key,
+            SelectorStats.tagListener((value: unknown, k: OnyxKey) => {
+                deliverValue(value as OnyxValue<TKey>, k as TKey);
+            }, 'connect'),
+        );
         PendingWrites.scheduleInitialSubscriberNotification(key, () => {
             if (!active) {
                 return;
