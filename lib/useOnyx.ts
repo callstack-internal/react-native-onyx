@@ -71,9 +71,16 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey
     // First-render marker for the loading gate below.
     const connectedKeyRef = useRef<OnyxKey | null>(null);
 
+    // Path-skip prototype (expensify-issues#3042): paths the selector read, used to skip notifications.
+    const protoRef = useRef<{paths: SelectorStats.PathAccess | undefined; selector: unknown}>({paths: undefined, selector: undefined});
+
     const subscribe = useCallback(
         (onStoreChange: () => void) => {
             const unsubscribe = onyxSubscriptionManager.subscribe(key, SelectorStats.tagListener(onStoreChange, 'useOnyx'));
+            // Registered for every selector so the prototype mode can be switched at runtime.
+            if (selector) {
+                onyxSubscriptionManager.setPathSource(onStoreChange, () => protoRef.current.paths);
+            }
 
             // `Onyx.init` hydrates the cache without notifying anyone, so a subscriber that mounted
             // before it finished would never hear about the stored value. Re-read once init lands.
@@ -92,6 +99,7 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey
                 unsubscribe();
             };
         },
+        // eslint-disable-next-line react-hooks/exhaustive-deps
         [key],
     );
     const getSnapshot = useCallback(() => onyxSubscriptionManager.getState(key) as OnyxValue<TKey> | undefined, [key]);
@@ -108,6 +116,19 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey
         (data: OnyxValue<TKey> | undefined): TReturnValue | undefined => {
             if (!selector) {
                 return (data as TReturnValue | undefined) ?? undefined;
+            }
+            const mode = SelectorStats.getProtoMode();
+            if (mode === 'off') {
+                protoRef.current.paths = undefined;
+            } else if (data !== null && typeof data === 'object') {
+                const proto = protoRef.current;
+                // 'static' records once per selector (like paths declared at the call site); 'auto' records on every run.
+                if (mode === 'auto' || proto.paths === undefined || proto.selector !== selector) {
+                    const start = SelectorStats.now();
+                    proto.paths = SelectorStats.recordPaths(data, selector);
+                    proto.selector = selector;
+                    SelectorStats.countProtoRecord(SelectorStats.now() - start);
+                }
             }
             return (isMeasuring ? SelectorStats.measureSelect(key, selector, statsState, data) : selector(data)) ?? undefined;
         },

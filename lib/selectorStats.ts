@@ -72,7 +72,7 @@ const now = typeof performance !== 'undefined' && typeof performance.now === 'fu
 
 function getEntry(key: OnyxKey, selector: (...args: never[]) => unknown): Entry {
     const keyBase = OnyxKeys.getCollectionKey(key) ?? key;
-    const selectorName = selector.name || `anon:${String(selector).slice(0, 80).replaceAll(/\s+/g, ' ')}`;
+    const selectorName = selector.name && !/^(t\d+|_temp\d*|selector)$/.test(selector.name) ? selector.name : `${selector.name || 'anon'}:${String(selector).slice(0, 160).replaceAll(/\s+/g, ' ')}`;
     const id = `${selectorName}@${keyBase}`;
     let entry = entries.get(id);
     if (!entry) {
@@ -307,6 +307,31 @@ function pathsUnchanged(paths: PathAccess | undefined, prev: unknown, next: unkn
     return true;
 }
 
+/** Path-skip prototype (expensify-issues#3042): 'off' | 'static' (paths recorded once, like declared `paths`) | 'auto' (re-recorded every run). */
+type ProtoMode = 'off' | 'static' | 'auto';
+function getProtoMode(): ProtoMode {
+    const m = (globalThis as {__ONYX_PATH_PROTO__?: string}).__ONYX_PATH_PROTO__ ?? (typeof process !== 'undefined' ? process.env?.ONYX_PATH_PROTO : undefined);
+    return m === 'static' || m === 'auto' ? m : 'off';
+}
+let protoChecked = 0;
+let protoSkipped = 0;
+let protoCheckMs = 0;
+let protoRecordMs = 0;
+function countProtoCheck(skipped: boolean, ms: number): void {
+    protoChecked++;
+    if (skipped) {
+        protoSkipped++;
+    }
+    protoCheckMs += ms;
+}
+function countProtoRecord(ms: number): void {
+    protoRecordMs += ms;
+}
+/** Strict path check used by the prototype: prune on `===`, compare leaves by reference. */
+function protoPathsUnchanged(paths: PathAccess | undefined, prev: unknown, next: unknown): boolean {
+    return pathsUnchanged(paths, prev, next, false, Object.is);
+}
+
 let deepEqualImpl: (a: unknown, b: unknown) => boolean = Object.is;
 
 function setDeepEqual(fn: (a: unknown, b: unknown) => boolean): void {
@@ -462,8 +487,12 @@ function totals() {
 
 type ListenerKind = 'useOnyx' | 'connect' | 'other';
 const listenerKinds = new WeakMap<object, ListenerKind>();
-function tagListener<T extends object>(fn: T, kind: ListenerKind): T {
+const listenerLabels = new WeakMap<object, string>();
+function tagListener<T extends object>(fn: T, kind: ListenerKind, label?: string): T {
     listenerKinds.set(fn, kind);
+    if (label) {
+        listenerLabels.set(fn, label);
+    }
     return fn;
 }
 
@@ -483,7 +512,8 @@ function exitDispatch(): void {
 
 function measureListener(key: OnyxKey, fn: object, ms: number): void {
     const keyBase = OnyxKeys.getCollectionKey(key) ?? key;
-    const id = `${listenerKinds.get(fn) ?? 'other'}@${keyBase}`;
+    const label = listenerLabels.get(fn);
+    const id = `${listenerKinds.get(fn) ?? 'other'}@${keyBase}${label ? ` ${label}` : ''}`;
     let k = kinds.get(id);
     if (!k) {
         k = {id, calls: 0, ms: 0, maxMs: 0};
@@ -506,7 +536,7 @@ function dispatchSummary() {
         byKind[kind].calls += k.calls;
         byKind[kind].ms = round(byKind[kind].ms + k.ms);
     }
-    return {byKind, overheadInDispatchMs: round(overheadInDispatchMs), selectorInDispatchMs: round(selectorInDispatchMs), selectorInDispatchRuns};
+    return {byKind, overheadInDispatchMs: round(overheadInDispatchMs), selectorInDispatchMs: round(selectorInDispatchMs), selectorInDispatchRuns, proto: {mode: getProtoMode(), checked: protoChecked, skipped: protoSkipped, checkMs: round(protoCheckMs), recordMs: round(protoRecordMs)}};
 }
 
 type DispatchEntry = {key: string; kind: 'key' | 'collection'; dispatches: number; listeners: number; ms: number; maxMs: number};
@@ -537,9 +567,13 @@ function reset(): void {
     overheadInDispatchMs = 0;
     selectorInDispatchMs = 0;
     selectorInDispatchRuns = 0;
+    protoChecked = 0;
+    protoSkipped = 0;
+    protoCheckMs = 0;
+    protoRecordMs = 0;
 }
 
 (globalThis as {__onyxSelectorStats?: unknown}).__onyxSelectorStats = {dump, totals, reset, dumpDispatch, dumpKinds, dispatchSummary};
 
-export {isEnabled, isTimingEnabled, createInstanceState, measureSelect, measureEqual, measureDispatch, setDeepEqual, now, tagListener, measureListener, enterDispatch, exitDispatch};
-export type {InstanceState};
+export {getProtoMode, countProtoCheck, countProtoRecord, protoPathsUnchanged, recordPaths, isEnabled, isTimingEnabled, createInstanceState, measureSelect, measureEqual, measureDispatch, setDeepEqual, now, tagListener, measureListener, enterDispatch, exitDispatch};
+export type {InstanceState, PathAccess};

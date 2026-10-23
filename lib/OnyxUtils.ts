@@ -5,6 +5,7 @@ import * as Logger from './Logger';
 import type Onyx from './Onyx';
 import cache, {TASK} from './OnyxCache';
 import OnyxKeys from './OnyxKeys';
+import * as SelectorStats from './selectorStats';
 import PendingWrites from './PendingWrites';
 import StorageCircuitBreaker from './StorageCircuitBreaker';
 import onyxSubscriptionManager from './OnyxSubscriptionManager';
@@ -500,13 +501,23 @@ function getCachedCollection<TKey extends CollectionKeyBase>(collectionKey: TKey
  * Notify subscribers of a single-key write. Wrapper over `onyxSubscriptionManager.notifyKey()`
  * that also performs LRU bookkeeping for eviction.
  */
-function notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>): void {
+function notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>, previous?: {value: unknown; collection: unknown}): void {
     if (value !== null && value !== undefined) {
         cache.addLastAccessedKey(key, OnyxKeys.isCollectionKey(key));
     } else {
         cache.removeLastAccessedKey(key);
     }
-    onyxSubscriptionManager.notifyKey(key, value);
+    onyxSubscriptionManager.notifyKey(key, value, previous);
+}
+
+/** Path-skip prototype: capture the value (and parent collection snapshot) before a write. */
+function capturePrevious(key: OnyxKey): {value: unknown; collection: unknown} | undefined {
+    if (SelectorStats.getProtoMode() === 'off') {
+        return undefined;
+    }
+    const collectionKey = OnyxKeys.getCollectionKey(key);
+    const isMember = collectionKey !== undefined && collectionKey !== key;
+    return {value: cache.get(key), collection: isMember ? cache.getCollectionData(collectionKey) : undefined};
 }
 
 /**
@@ -535,8 +546,9 @@ function notifyCollection<TKey extends CollectionKeyBase>(
  * Remove a key from Onyx and update the subscribers.
  */
 function remove<TKey extends OnyxKey>(key: TKey): Promise<void> {
+    const previous = capturePrevious(key);
     cache.drop(key);
-    notifyKey(key, undefined as OnyxValue<TKey>);
+    notifyKey(key, undefined as OnyxValue<TKey>, previous);
 
     if (OnyxKeys.isRamOnlyKey(key)) {
         return Promise.resolve();
@@ -698,8 +710,9 @@ function broadcastUpdate<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>
         return;
     }
 
+    const previous = capturePrevious(key);
     cache.set(key, value);
-    notifyKey(key, value);
+    notifyKey(key, value, previous);
 }
 
 function hasPendingMergeForKey(key: OnyxKey): boolean {

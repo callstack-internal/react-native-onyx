@@ -26,6 +26,25 @@ type GenericListener = (value: unknown, key: OnyxKey) => void;
 class OnyxSubscriptionManager {
     private keyListeners: Map<OnyxKey, Set<GenericListener>>;
 
+    /** Path-skip prototype: listener -> current paths its selector reads. */
+    private pathSources = new WeakMap<object, () => SelectorStats.PathAccess | undefined>();
+
+    setPathSource(listener: object, getPaths: () => SelectorStats.PathAccess | undefined): void {
+        this.pathSources.set(listener, getPaths);
+    }
+
+    /** True when the listener's selector paths are unchanged between prev and next, so it can be skipped. */
+    private canSkip(listener: object, prev: unknown, next: unknown): boolean {
+        const getPaths = this.pathSources.get(listener);
+        if (!getPaths || SelectorStats.getProtoMode() === 'off') {
+            return false;
+        }
+        const start = SelectorStats.now();
+        const skip = SelectorStats.protoPathsUnchanged(getPaths(), prev, next);
+        SelectorStats.countProtoCheck(skip, SelectorStats.now() - start);
+        return skip;
+    }
+
     constructor() {
         this.keyListeners = new Map();
     }
@@ -79,24 +98,27 @@ class OnyxSubscriptionManager {
      *   2. If key is a collection member, keyListeners.get(collectionKey): collection
      *      listeners for the parent collection.
      */
-    notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>): void {
+    notifyKey<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>, previous?: {value: unknown; collection: unknown}): void {
         if (!SelectorStats.isTimingEnabled()) {
-            this.notifyKeyImpl(key, value);
+            this.notifyKeyImpl(key, value, previous);
             return;
         }
         const start = SelectorStats.now();
         SelectorStats.enterDispatch();
-        const count = this.notifyKeyImpl(key, value);
+        const count = this.notifyKeyImpl(key, value, previous);
         SelectorStats.exitDispatch();
         SelectorStats.measureDispatch(key, 'key', count, SelectorStats.now() - start);
     }
 
-    private notifyKeyImpl<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>): number {
+    private notifyKeyImpl<TKey extends OnyxKey>(key: TKey, value: OnyxValue<TKey>, previous?: {value: unknown; collection: unknown}): number {
         let count = 0;
         // 1. Exact-key listeners
         const exact = this.keyListeners.get(key);
         if (exact && exact.size > 0) {
             for (const listener of [...exact]) {
+                if (previous && this.canSkip(listener, previous.value, value)) {
+                    continue;
+                }
                 count++;
                 this.safeInvoke(() => listener(value, key), key, listener);
             }
@@ -112,6 +134,9 @@ class OnyxSubscriptionManager {
             if (collectionListeners && collectionListeners.size > 0) {
                 const collectionData = cache.getCollectionData(collectionKey);
                 for (const listener of [...collectionListeners]) {
+                    if (previous?.collection !== undefined && this.canSkip(listener, previous.collection, collectionData)) {
+                        continue;
+                    }
                     count++;
                     this.safeInvoke(() => listener(collectionData, collectionKey), collectionKey, listener);
                 }

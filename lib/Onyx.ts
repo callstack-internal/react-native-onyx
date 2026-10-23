@@ -145,6 +145,7 @@ function init({
  */
 function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Connection {
     const {key, callback} = connectOptions;
+    const connectLabel = SelectorStats.isTimingEnabled() ? String(callback).slice(0, 160).replaceAll(/\s+/g, ' ') : undefined;
 
     let active = true;
     let unsubscribeFn: (() => void) | null = null;
@@ -170,7 +171,7 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
                 key,
                 SelectorStats.tagListener((value: unknown, k: OnyxKey) => {
                     deliverCollection(value as unknown as OnyxValue<TKey>, k as TKey);
-                }, 'connect'),
+                }, 'connect', connectLabel),
             );
             PendingWrites.scheduleInitialSubscriberNotification(key, () => {
                 if (!active) {
@@ -194,7 +195,7 @@ function connect<TKey extends OnyxKey>(connectOptions: ConnectOptions<TKey>): Co
             key,
             SelectorStats.tagListener((value: unknown, k: OnyxKey) => {
                 deliverValue(value as OnyxValue<TKey>, k as TKey);
-            }, 'connect'),
+            }, 'connect', connectLabel),
         );
         PendingWrites.scheduleInitialSubscriberNotification(key, () => {
             if (!active) {
