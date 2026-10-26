@@ -19,25 +19,53 @@ type GenericListener = (value: unknown, key: OnyxKey) => void;
 const reportedCacheMisses = new Set<OnyxKey>();
 
 function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
+    if (typeof key !== 'string') {
+        // QA: pre-fix code parses this key in isRamOnlyKey -> getCollectionKey and throws
+        console.log('💥 [OnyxQA] non-string key reached the cache-miss check, isRamOnlyKey will throw next', key);
+    }
+    if (typeof key === 'string' && key.includes('_qa')) {
+        console.log('🔎 [OnyxQA] guard inputs', {
+            key,
+            inIndex: cache.getAllKeys().has(key),
+            nullishMarked: cache.hasNullishStorageKey(key),
+            ramOnly: OnyxKeys.isRamOnlyKey(key),
+            cached: cache.get(key),
+        });
+    }
     if (OnyxKeys.isRamOnlyKey(key) || !cache.getAllKeys().has(key) || cache.hasNullishStorageKey(key)) {
         return;
     }
 
     const reportKey = OnyxKeys.getCollectionKey(key) ?? key;
     if (reportedCacheMisses.has(reportKey)) {
+        console.log('🙈 [OnyxQA] collection already marked, skipping storage check', {key, reportKey, markedCount: reportedCacheMisses.size, marked: [...reportedCacheMisses]});
         return;
     }
     reportedCacheMisses.add(reportKey);
+    console.log('🧪 [OnyxQA] cache miss on an indexed key, marked collection BEFORE storage confirms, reading storage', {
+        key,
+        reportKey,
+        markedCount: reportedCacheMisses.size,
+        marked: [...reportedCacheMisses],
+    });
 
     Storage.getItem(key)
         .then((value) => {
+            const cachedNow = cache.get(key);
+            console.log('📦 [OnyxQA] storage answered', {key, storageValue: value, cacheValueNow: cachedNow});
             if (value === undefined || value === null) {
+                console.log('🫙 [OnyxQA] storage empty too, no log, but collection stays marked for the session', {reportKey});
                 return;
             }
+            if (cachedNow !== undefined) {
+                console.log('🔁 [OnyxQA] FALSE POSITIVE: cache has the value now, pre-fix code logs hmmm anyway', {key});
+            }
 
+            console.log('🚨 [OnyxQA] logging hmmm', {reportKey});
             Logger.logHmmm(`Cache held no value for a key storage still has: ${reportKey}`);
         })
         .catch((error: unknown) => {
+            console.log('❌ [OnyxQA] storage read failed', {key, error: String(error)});
             Logger.logInfo(`Could not check storage for a suspected cache miss on ${reportKey}. Error: ${String(error)}`);
         });
 }

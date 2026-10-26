@@ -772,7 +772,13 @@ function exportState(): Promise<Record<OnyxKey, OnyxValue<OnyxKey>>> {
  * @returns The current value, or `undefined` if the key has none.
  */
 function get<TKey extends OnyxKey>(key: TKey): Promise<OnyxValue<TKey>> {
-    return OnyxUtils.afterInit(() => Promise.resolve((onyxSubscriptionManager.getState(key) ?? undefined) as OnyxValue<TKey>));
+    return OnyxUtils.afterInit(() => {
+        const raw = onyxSubscriptionManager.getState(key);
+        if (raw === null) {
+            console.log('🟡 [OnyxQA] getState returned null, the ?? undefined fallback did something', {key});
+        }
+        return Promise.resolve((raw ?? undefined) as OnyxValue<TKey>);
+    });
 }
 
 /**
