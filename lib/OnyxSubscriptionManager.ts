@@ -21,7 +21,7 @@ const reportedCacheMisses = new Set<OnyxKey>();
 function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
     if (typeof key !== 'string') {
         // QA: pre-fix code parses this key in isRamOnlyKey -> getCollectionKey and throws
-        console.log('💥 [OnyxQA] non-string key reached the cache-miss check, isRamOnlyKey will throw next', key);
+        console.log('💥 [OnyxQA] non-string key reached the cache-miss check, FIX: index guard runs first and exits', key);
     }
     if (typeof key === 'string' && key.includes('_qa')) {
         console.log('🔎 [OnyxQA] guard inputs', {
@@ -32,7 +32,8 @@ function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
             cached: cache.get(key),
         });
     }
-    if (OnyxKeys.isRamOnlyKey(key) || !cache.getAllKeys().has(key) || cache.hasNullishStorageKey(key)) {
+    // Check the key index first. `isRamOnlyKey` calls `getCollectionKey`, which throws on a non-string key.
+    if (!cache.getAllKeys().has(key) || OnyxKeys.isRamOnlyKey(key) || cache.hasNullishStorageKey(key)) {
         return;
     }
 
@@ -57,8 +58,10 @@ function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
                 console.log('🫙 [OnyxQA] storage empty too, no log, but collection stays marked for the session', {reportKey});
                 return;
             }
+            // Storage is empty too, or a write filled the cache during the read.
             if (cachedNow !== undefined) {
-                console.log('🔁 [OnyxQA] FALSE POSITIVE: cache has the value now, pre-fix code logs hmmm anyway', {key});
+                console.log('🔁 [OnyxQA] cache has the value now, FIX: not a miss, no hmmm', {key});
+                return;
             }
 
             console.log('🚨 [OnyxQA] logging hmmm', {reportKey});
