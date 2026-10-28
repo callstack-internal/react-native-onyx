@@ -292,15 +292,17 @@ function pathsUnchanged(paths: PathAccess | undefined, prev: unknown, next: unkn
     if (!paths || paths === 'unknown') {
         return false;
     }
-    for (const p of paths.leafPaths) {
-        if (!pathUnchanged(prev, next, p, deepLeaf, isEqual)) {
-            return false;
-        }
-    }
+    // Enumerated nodes first: a selector that loops over a whole collection fails here on any member change,
+    // so this exits before walking its (often thousands of) per-member leaf paths.
     for (const p of paths.refPaths) {
         const a = readPath(prev, p, p.length);
         const b = readPath(next, p, p.length);
         if (a !== b && !(deepLeaf && isEqual(a, b))) {
+            return false;
+        }
+    }
+    for (const p of paths.leafPaths) {
+        if (!pathUnchanged(prev, next, p, deepLeaf, isEqual)) {
             return false;
         }
     }
