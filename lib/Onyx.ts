@@ -76,6 +76,14 @@ function init({
 
                 // Capture the previous cached value before cache.set() so notifyCollection() can diff old vs new per member.
                 const previousValue = isCollectionMember ? cache.get(key) : undefined;
+                const cachedBeforeSync = cache.get(key);
+                if ((value === null || value === undefined) && cachedBeforeSync !== undefined) {
+                    // QA: a sync read that found no row is about to erase a value this tab holds. Either another tab
+                    // removed the key after we wrote it, or the read was created before our own write committed
+                    // (the stale-sync race). The 📦/🚨 lines that follow tell which: storage empty means removal,
+                    // storage holding our value means the race.
+                    console.log('🧨 [OnyxQA] sync is erasing a cached value', {key, cachedBeforeSync, pendingLocalWrites: PendingWrites.getPendingWritesForKey(key).length});
+                }
                 cache.set(key, value);
 
                 if (isCollectionMember && collectionKey) {
