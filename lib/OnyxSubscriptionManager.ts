@@ -24,6 +24,8 @@ type QaErasure = {at: number; pendingLocalWrites: number; erasedValue: unknown};
 const qaErasures = new Map<OnyxKey, QaErasure>();
 function qaRecordErasure(key: OnyxKey, pendingLocalWrites: number, erasedValue: unknown): void {
     qaErasures.set(key, {at: Date.now(), pendingLocalWrites, erasedValue});
+    // A new episode for this key: let the next miss report again instead of hiding behind the per-key dedupe.
+    reportedCacheMisses.delete(key);
 }
 
 function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
@@ -46,17 +48,22 @@ function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
             }
 
             const erasure = qaErasures.get(key);
+            const cacheValueNow = cache.get(key);
             const msSinceErasure = erasure ? missedAt - erasure.at : undefined;
-            const verdict =
-                erasure && erasure.pendingLocalWrites > 0
-                    ? 'BUG: stale sync erased a value this tab was writing'
-                    : erasure
-                    ? 'SUSPECT: sync erased the value, then storage got one back (other tab rewrote it, or our write committed late)'
-                    : 'BUG: cache lost a value with no sync erasure recorded, unknown cause';
+            let verdict: string;
+            if (cacheValueNow === undefined) {
+                verdict = erasure ? 'BUG: value still missing from cache after a sync erasure, storage has it' : 'BUG: value missing from cache, no sync erasure recorded, unknown cause';
+            } else if (erasure && erasure.pendingLocalWrites > 0) {
+                verdict = 'RACE HEALED: sync erased a value this tab was writing, a later write refilled the cache';
+            } else if (erasure) {
+                verdict = 'TRANSIENT: sync erased the value, this tab rewrote it within the gap, subscribers saw undefined briefly';
+            } else {
+                verdict = 'ODD: cache has a value again with no erasure recorded';
+            }
             console.log(`🚨 [OnyxQA] ${verdict}`, {
                 key,
                 storageValue: value,
-                cacheValueNow: cache.get(key),
+                cacheValueNow,
                 msSinceErasure,
                 erasedValue: erasure?.erasedValue,
                 pendingLocalWritesAtErasure: erasure?.pendingLocalWrites,

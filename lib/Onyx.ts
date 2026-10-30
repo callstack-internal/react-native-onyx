@@ -61,6 +61,9 @@ function init({
         // collection is notified once (mirroring the local mergeCollection batching) instead of
         // re-delivering the whole collection per member.
         Storage.keepInstancesSync?.((pairs) => {
+            // QA: one line per applied sync batch so repeated batches from one remote action are visible.
+            const qaErased = pairs.filter(([key, value]) => (value === null || value === undefined) && cache.get(key) !== undefined).map(([key]) => key);
+            console.log('📨 [OnyxQA] sync batch', {keys: pairs.length, erasingCachedValues: qaErased.length, erased: qaErased.slice(0, 12)});
             const individual: Array<[OnyxKey, OnyxEntry<KeyValueMapping[OnyxKey]>]> = [];
             const collectionBatches = new Map<string, {partial: NonUndefined<OnyxCollection<KeyValueMapping[OnyxKey]>>; previous: NonUndefined<OnyxCollection<KeyValueMapping[OnyxKey]>>}>();
 
