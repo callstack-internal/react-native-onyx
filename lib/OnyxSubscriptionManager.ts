@@ -18,58 +18,53 @@ type GenericListener = (value: unknown, key: OnyxKey) => void;
 
 const reportedCacheMisses = new Set<OnyxKey>();
 
+// QA: last time the cross-tab sync erased a cached value for a key, recorded by the sync handler in Onyx.ts.
+// Lets a confirmed miss say what emptied the cache and whether a local write was in flight at that moment.
+type QaErasure = {at: number; pendingLocalWrites: number; erasedValue: unknown};
+const qaErasures = new Map<OnyxKey, QaErasure>();
+function qaRecordErasure(key: OnyxKey, pendingLocalWrites: number, erasedValue: unknown): void {
+    qaErasures.set(key, {at: Date.now(), pendingLocalWrites, erasedValue});
+}
+
 function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
-    if (typeof key !== 'string') {
-        // QA: pre-fix code parses this key in isRamOnlyKey -> getCollectionKey and throws
-        console.log('💥 [OnyxQA] non-string key reached the cache-miss check, FIX: index guard runs first and exits', key);
-    }
-    if (typeof key === 'string' && key.includes('_qa')) {
-        console.log('🔎 [OnyxQA] guard inputs', {
-            key,
-            inIndex: cache.getAllKeys().has(key),
-            nullishMarked: cache.hasNullishStorageKey(key),
-            ramOnly: OnyxKeys.isRamOnlyKey(key),
-            cached: cache.get(key),
-        });
-    }
-    // Check the key index first. `isRamOnlyKey` calls `getCollectionKey`, which throws on a non-string key.
     if (!cache.getAllKeys().has(key) || OnyxKeys.isRamOnlyKey(key) || cache.hasNullishStorageKey(key)) {
         return;
     }
 
-    const reportKey = OnyxKeys.getCollectionKey(key) ?? key;
-    if (reportedCacheMisses.has(reportKey)) {
-        console.log('🙈 [OnyxQA] collection already marked, skipping storage check', {key, reportKey, markedCount: reportedCacheMisses.size, marked: [...reportedCacheMisses]});
+    // QA: mark per key instead of per collection so every real miss is visible, not only the first per collection.
+    if (reportedCacheMisses.has(key)) {
         return;
     }
-    reportedCacheMisses.add(reportKey);
-    console.log('🧪 [OnyxQA] cache miss on an indexed key, marked collection BEFORE storage confirms, reading storage', {
-        key,
-        reportKey,
-        markedCount: reportedCacheMisses.size,
-        marked: [...reportedCacheMisses],
-    });
+    reportedCacheMisses.add(key);
+    const missedAt = Date.now();
 
     Storage.getItem(key)
         .then((value) => {
-            const cachedNow = cache.get(key);
-            console.log('📦 [OnyxQA] storage answered', {key, storageValue: value, cacheValueNow: cachedNow});
             if (value === undefined || value === null) {
-                console.log('🫙 [OnyxQA] storage empty too, no log, but collection stays marked for the session', {reportKey});
-                return;
-            }
-            // Storage is empty too, or a write filled the cache during the read.
-            if (cachedNow !== undefined) {
-                console.log('🔁 [OnyxQA] cache has the value now, FIX: not a miss, no hmmm', {key});
+                // Storage is empty too: a removal, not a loss. Silent in QA.
                 return;
             }
 
-            console.log('🚨 [OnyxQA] logging hmmm', {reportKey});
-            Logger.logHmmm(`Cache held no value for a key storage still has: ${reportKey}`);
+            const erasure = qaErasures.get(key);
+            const msSinceErasure = erasure ? missedAt - erasure.at : undefined;
+            const verdict =
+                erasure && erasure.pendingLocalWrites > 0
+                    ? 'BUG: stale sync erased a value this tab was writing'
+                    : erasure
+                    ? 'SUSPECT: sync erased the value, then storage got one back (other tab rewrote it, or our write committed late)'
+                    : 'BUG: cache lost a value with no sync erasure recorded, unknown cause';
+            console.log(`🚨 [OnyxQA] ${verdict}`, {
+                key,
+                storageValue: value,
+                cacheValueNow: cache.get(key),
+                msSinceErasure,
+                erasedValue: erasure?.erasedValue,
+                pendingLocalWritesAtErasure: erasure?.pendingLocalWrites,
+            });
+            Logger.logHmmm(`Cache held no value for a key storage still has: ${OnyxKeys.getCollectionKey(key) ?? key}`);
         })
         .catch((error: unknown) => {
-            console.log('❌ [OnyxQA] storage read failed', {key, error: String(error)});
-            Logger.logInfo(`Could not check storage for a suspected cache miss on ${reportKey}. Error: ${String(error)}`);
+            Logger.logInfo(`Could not check storage for a suspected cache miss on ${key}. Error: ${String(error)}`);
         });
 }
 
@@ -229,6 +224,11 @@ class OnyxSubscriptionManager {
 
     resetCacheMissReports(): void {
         reportedCacheMisses.clear();
+        qaErasures.clear();
+    }
+
+    qaRecordErasure(key: OnyxKey, pendingLocalWrites: number, erasedValue: unknown): void {
+        qaRecordErasure(key, pendingLocalWrites, erasedValue);
     }
 
     /**

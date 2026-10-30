@@ -78,11 +78,12 @@ function init({
                 const previousValue = isCollectionMember ? cache.get(key) : undefined;
                 const cachedBeforeSync = cache.get(key);
                 if ((value === null || value === undefined) && cachedBeforeSync !== undefined) {
-                    // QA: a sync read that found no row is about to erase a value this tab holds. Either another tab
-                    // removed the key after we wrote it, or the read was created before our own write committed
-                    // (the stale-sync race). The 📦/🚨 lines that follow tell which: storage empty means removal,
-                    // storage holding our value means the race.
-                    console.log('🧨 [OnyxQA] sync is erasing a cached value', {key, cachedBeforeSync, pendingLocalWrites: PendingWrites.getPendingWritesForKey(key).length});
+                    const pendingLocalWrites = PendingWrites.getPendingWritesForKey(key).length;
+                    onyxSubscriptionManager.qaRecordErasure(key, pendingLocalWrites, cachedBeforeSync);
+                    if (pendingLocalWrites > 0) {
+                        // QA: the only erasure worth seeing live. A sync read found no row while this tab had a write in flight.
+                        console.log('🧨 [OnyxQA] RACE: sync is erasing a value this tab is still writing', {key, cachedBeforeSync, pendingLocalWrites});
+                    }
                 }
                 cache.set(key, value);
 
@@ -781,11 +782,7 @@ function exportState(): Promise<Record<OnyxKey, OnyxValue<OnyxKey>>> {
  */
 function get<TKey extends OnyxKey>(key: TKey): Promise<OnyxValue<TKey>> {
     return OnyxUtils.afterInit(() => {
-        const raw = onyxSubscriptionManager.getState(key);
-        if (raw === null) {
-            console.log('🟡 [OnyxQA] getState returned null, FIX removed ?? undefined so this would now surface', {key});
-        }
-        return Promise.resolve(raw as OnyxValue<TKey>);
+        return Promise.resolve(onyxSubscriptionManager.getState(key) as OnyxValue<TKey>);
     });
 }
 
