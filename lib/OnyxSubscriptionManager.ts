@@ -68,6 +68,22 @@ function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
                 erasedValue: erasure?.erasedValue,
                 pendingLocalWritesAtErasure: erasure?.pendingLocalWrites,
             });
+            // QA: settle the verdict. A value in transit through the next sync batch or a rewrite lands within a few
+            // hundred ms. What is left after that is the real state.
+            setTimeout(() => {
+                Storage.getItem(key).then((storageLater) => {
+                    const cacheLater = cache.get(key);
+                    let finalVerdict: string;
+                    if (cacheLater !== undefined) {
+                        finalVerdict = 'HEALED: cache has a value again, this was propagation lag, not a loss';
+                    } else if (storageLater === undefined || storageLater === null) {
+                        finalVerdict = 'CONVERGED EMPTY: storage is empty too now, another tab removed it again';
+                    } else {
+                        finalVerdict = 'PERSISTENT LOSS: cache still empty, storage still has a value';
+                    }
+                    console.log(`🏁 [OnyxQA] ${finalVerdict}`, {key, cacheLater, storageLater});
+                });
+            }, 500);
             Logger.logHmmm(`Cache held no value for a key storage still has: ${OnyxKeys.getCollectionKey(key) ?? key}`);
         })
         .catch((error: unknown) => {
