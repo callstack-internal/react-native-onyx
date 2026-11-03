@@ -61,6 +61,10 @@ function init({
         // collection is notified once (mirroring the local mergeCollection batching) instead of
         // re-delivering the whole collection per member.
         Storage.keepInstancesSync?.((pairs) => {
+            // QA: one line per applied sync batch so repeated batches from one remote action are visible.
+            const qaErased = pairs.filter(([key, value]) => (value === null || value === undefined) && cache.get(key) !== undefined).map(([key]) => key);
+            const qaRemoved: OnyxKey[] = [];
+            const qaReadded: OnyxKey[] = [];
             const individual: Array<[OnyxKey, OnyxEntry<KeyValueMapping[OnyxKey]>]> = [];
             const collectionBatches = new Map<string, {partial: NonUndefined<OnyxCollection<KeyValueMapping[OnyxKey]>>; previous: NonUndefined<OnyxCollection<KeyValueMapping[OnyxKey]>>}>();
 
@@ -78,11 +82,26 @@ function init({
 
                 // Capture the previous cached value before cache.set() so notifyCollection() can diff old vs new per member.
                 const previousValue = isCollectionMember ? cache.get(key) : undefined;
+                const cachedBeforeSync = cache.get(key);
+                if ((value === null || value === undefined) && cachedBeforeSync !== undefined) {
+                    const pendingLocalWrites = PendingWrites.getPendingWritesForKey(key).length;
+                    onyxSubscriptionManager.qaRecordErasure(key, pendingLocalWrites, cachedBeforeSync);
+                    if (pendingLocalWrites > 0) {
+                        // QA: the only erasure worth seeing live. A sync read found no row while this tab had a write in flight.
+                        console.log('🧨 [OnyxQA] RACE: sync is erasing a value this tab is still writing', {key, cachedBeforeSync, pendingLocalWrites});
+                    }
+                }
                 if (value === null || value === undefined) {
-                    // Drop like a local removal, so the key leaves the index instead of lingering as an indexed key with no value.
+                    // Fix under test: drop like a local removal, so the key leaves the index and the diagnostic skips it.
                     cache.drop(key);
+                    qaRemoved.push(key);
+                    onyxSubscriptionManager.qaRecordSyncRemoval(key);
                 } else {
+                    if (!cache.getAllKeys().has(key)) {
+                        qaReadded.push(key);
+                    }
                     cache.set(key, value);
+                    onyxSubscriptionManager.qaForgetSyncRemoval(key);
                 }
 
                 if (isCollectionMember && collectionKey) {
@@ -101,6 +120,18 @@ function init({
                     individual.push([key, value]);
                 }
             }
+
+            // QA: stillIndexedAfterRemoval must always be 0, that is the mechanism the fix relies on.
+            const qaStillIndexed = qaRemoved.filter((key) => cache.getAllKeys().has(key));
+            console.log('📨 [OnyxQA] sync batch', {
+                keys: pairs.length,
+                removed: qaRemoved.length,
+                readded: qaReadded.length,
+                erasingCachedValues: qaErased.length,
+                erased: qaErased.slice(0, 12),
+                readdedSample: qaReadded.slice(0, 12),
+                stillIndexedAfterRemoval: qaStillIndexed.length,
+            });
 
             // Non-collection keys: notify individually, matching notifyKey() semantics for exact keys.
             for (const [key, value] of individual) {

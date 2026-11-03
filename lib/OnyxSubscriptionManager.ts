@@ -18,27 +18,107 @@ type GenericListener = (value: unknown, key: OnyxKey) => void;
 
 const reportedCacheMisses = new Set<OnyxKey>();
 
+// QA: last time the cross-tab sync erased a cached value for a key, recorded by the sync handler in Onyx.ts.
+// Lets a confirmed miss say what emptied the cache and whether a local write was in flight at that moment.
+type QaErasure = {at: number; pendingLocalWrites: number; erasedValue: unknown};
+const qaErasures = new Map<OnyxKey, QaErasure>();
+function qaRecordErasure(key: OnyxKey, pendingLocalWrites: number, erasedValue: unknown): void {
+    qaErasures.set(key, {at: Date.now(), pendingLocalWrites, erasedValue});
+    // A new episode for this key: let the next miss report again instead of hiding behind the per-key dedupe.
+    reportedCacheMisses.delete(key);
+}
+
+// QA: keys another tab removed and this tab dropped. When the diagnostic skips one of them at the index guard,
+// that is the fix doing its job. Logged once per key, coalesced into one line per second to survive sign-out bursts.
+const qaSyncRemovedKeys = new Set<OnyxKey>();
+const qaSkipLogged = new Set<OnyxKey>();
+let qaPendingSkips: OnyxKey[] = [];
+let qaSkipFlush: ReturnType<typeof setTimeout> | undefined;
+function qaNoteDiagnosticSkip(key: OnyxKey): void {
+    if (qaSkipLogged.has(key)) {
+        return;
+    }
+    qaSkipLogged.add(key);
+    qaPendingSkips.push(key);
+    if (qaSkipFlush) {
+        return;
+    }
+    qaSkipFlush = setTimeout(() => {
+        console.log('🛡️ [OnyxQA] diagnostic skipped keys another tab removed, no storage read, no log', {
+            keys: qaPendingSkips.length,
+            sample: qaPendingSkips.slice(0, 12),
+        });
+        qaPendingSkips = [];
+        qaSkipFlush = undefined;
+    }, 1000);
+}
+
 function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
-    if (!cache.getAllKeys().has(key) || OnyxKeys.isRamOnlyKey(key) || cache.hasNullishStorageKey(key)) {
+    if (!cache.getAllKeys().has(key)) {
+        if (qaSyncRemovedKeys.has(key)) {
+            qaNoteDiagnosticSkip(key);
+        }
+        return;
+    }
+    if (OnyxKeys.isRamOnlyKey(key) || cache.hasNullishStorageKey(key)) {
         return;
     }
 
-    const reportKey = OnyxKeys.getCollectionKey(key) ?? key;
-    if (reportedCacheMisses.has(reportKey)) {
+    // QA: mark per key instead of per collection so every real miss is visible, not only the first per collection.
+    if (reportedCacheMisses.has(key)) {
         return;
     }
-    reportedCacheMisses.add(reportKey);
+    reportedCacheMisses.add(key);
+    const missedAt = Date.now();
 
     Storage.getItem(key)
         .then((value) => {
             if (value === undefined || value === null) {
+                // Storage is empty too: a removal, not a loss. Silent in QA.
                 return;
             }
 
-            Logger.logHmmm(`Cache held no value for a key storage still has: ${reportKey}`);
+            const erasure = qaErasures.get(key);
+            const cacheValueNow = cache.get(key);
+            const msSinceErasure = erasure ? missedAt - erasure.at : undefined;
+            let verdict: string;
+            if (cacheValueNow === undefined) {
+                verdict = erasure ? 'BUG: value still missing from cache after a sync erasure, storage has it' : 'BUG: value missing from cache, no sync erasure recorded, unknown cause';
+            } else if (erasure && erasure.pendingLocalWrites > 0) {
+                verdict = 'RACE HEALED: sync erased a value this tab was writing, a later write refilled the cache';
+            } else if (erasure) {
+                verdict = 'TRANSIENT: sync erased the value, this tab rewrote it within the gap, subscribers saw undefined briefly';
+            } else {
+                verdict = 'ODD: cache has a value again with no erasure recorded';
+            }
+            console.log(`🚨 [OnyxQA] ${verdict}`, {
+                key,
+                storageValue: value,
+                cacheValueNow,
+                msSinceErasure,
+                erasedValue: erasure?.erasedValue,
+                pendingLocalWritesAtErasure: erasure?.pendingLocalWrites,
+            });
+            // QA: settle the verdict. A value in transit through the next sync batch or a rewrite lands within a few
+            // hundred ms. What is left after that is the real state.
+            setTimeout(() => {
+                Storage.getItem(key).then((storageLater) => {
+                    const cacheLater = cache.get(key);
+                    let finalVerdict: string;
+                    if (cacheLater !== undefined) {
+                        finalVerdict = 'HEALED: cache has a value again, this was propagation lag, not a loss';
+                    } else if (storageLater === undefined || storageLater === null) {
+                        finalVerdict = 'CONVERGED EMPTY: storage is empty too now, another tab removed it again';
+                    } else {
+                        finalVerdict = 'PERSISTENT LOSS: cache still empty, storage still has a value';
+                    }
+                    console.log(`🏁 [OnyxQA] ${finalVerdict}`, {key, cacheLater, storageLater});
+                });
+            }, 500);
+            Logger.logHmmm(`Cache held no value for a key storage still has: ${OnyxKeys.getCollectionKey(key) ?? key}`);
         })
         .catch((error: unknown) => {
-            Logger.logInfo(`Could not check storage for a suspected cache miss on ${reportKey}. Error: ${String(error)}`);
+            Logger.logInfo(`Could not check storage for a suspected cache miss on ${key}. Error: ${String(error)}`);
         });
 }
 
@@ -198,6 +278,22 @@ class OnyxSubscriptionManager {
 
     resetCacheMissReports(): void {
         reportedCacheMisses.clear();
+        qaErasures.clear();
+        qaSyncRemovedKeys.clear();
+        qaSkipLogged.clear();
+    }
+
+    qaRecordErasure(key: OnyxKey, pendingLocalWrites: number, erasedValue: unknown): void {
+        qaRecordErasure(key, pendingLocalWrites, erasedValue);
+    }
+
+    qaRecordSyncRemoval(key: OnyxKey): void {
+        qaSyncRemovedKeys.add(key);
+        qaSkipLogged.delete(key);
+    }
+
+    qaForgetSyncRemoval(key: OnyxKey): void {
+        qaSyncRemovedKeys.delete(key);
     }
 
     /**
