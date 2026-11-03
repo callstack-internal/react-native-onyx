@@ -63,7 +63,8 @@ function init({
         Storage.keepInstancesSync?.((pairs) => {
             // QA: one line per applied sync batch so repeated batches from one remote action are visible.
             const qaErased = pairs.filter(([key, value]) => (value === null || value === undefined) && cache.get(key) !== undefined).map(([key]) => key);
-            console.log('📨 [OnyxQA] sync batch', {keys: pairs.length, erasingCachedValues: qaErased.length, erased: qaErased.slice(0, 12)});
+            const qaRemoved: OnyxKey[] = [];
+            const qaReadded: OnyxKey[] = [];
             const individual: Array<[OnyxKey, OnyxEntry<KeyValueMapping[OnyxKey]>]> = [];
             const collectionBatches = new Map<string, {partial: NonUndefined<OnyxCollection<KeyValueMapping[OnyxKey]>>; previous: NonUndefined<OnyxCollection<KeyValueMapping[OnyxKey]>>}>();
 
@@ -88,7 +89,18 @@ function init({
                         console.log('🧨 [OnyxQA] RACE: sync is erasing a value this tab is still writing', {key, cachedBeforeSync, pendingLocalWrites});
                     }
                 }
-                cache.set(key, value);
+                if (value === null || value === undefined) {
+                    // Fix under test: drop like a local removal, so the key leaves the index and the diagnostic skips it.
+                    cache.drop(key);
+                    qaRemoved.push(key);
+                    onyxSubscriptionManager.qaRecordSyncRemoval(key);
+                } else {
+                    if (!cache.getAllKeys().has(key)) {
+                        qaReadded.push(key);
+                    }
+                    cache.set(key, value);
+                    onyxSubscriptionManager.qaForgetSyncRemoval(key);
+                }
 
                 if (isCollectionMember && collectionKey) {
                     let batch = collectionBatches.get(collectionKey);
@@ -106,6 +118,18 @@ function init({
                     individual.push([key, value]);
                 }
             }
+
+            // QA: stillIndexedAfterRemoval must always be 0, that is the mechanism the fix relies on.
+            const qaStillIndexed = qaRemoved.filter((key) => cache.getAllKeys().has(key));
+            console.log('📨 [OnyxQA] sync batch', {
+                keys: pairs.length,
+                removed: qaRemoved.length,
+                readded: qaReadded.length,
+                erasingCachedValues: qaErased.length,
+                erased: qaErased.slice(0, 12),
+                readdedSample: qaReadded.slice(0, 12),
+                stillIndexedAfterRemoval: qaStillIndexed.length,
+            });
 
             // Non-collection keys: notify individually, matching notifyKey() semantics for exact keys.
             for (const [key, value] of individual) {

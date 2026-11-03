@@ -28,8 +28,39 @@ function qaRecordErasure(key: OnyxKey, pendingLocalWrites: number, erasedValue: 
     reportedCacheMisses.delete(key);
 }
 
+// QA: keys another tab removed and this tab dropped. When the diagnostic skips one of them at the index guard,
+// that is the fix doing its job. Logged once per key, coalesced into one line per second to survive sign-out bursts.
+const qaSyncRemovedKeys = new Set<OnyxKey>();
+const qaSkipLogged = new Set<OnyxKey>();
+let qaPendingSkips: OnyxKey[] = [];
+let qaSkipFlush: ReturnType<typeof setTimeout> | undefined;
+function qaNoteDiagnosticSkip(key: OnyxKey): void {
+    if (qaSkipLogged.has(key)) {
+        return;
+    }
+    qaSkipLogged.add(key);
+    qaPendingSkips.push(key);
+    if (qaSkipFlush) {
+        return;
+    }
+    qaSkipFlush = setTimeout(() => {
+        console.log('🛡️ [OnyxQA] diagnostic skipped keys another tab removed, no storage read, no log', {
+            keys: qaPendingSkips.length,
+            sample: qaPendingSkips.slice(0, 12),
+        });
+        qaPendingSkips = [];
+        qaSkipFlush = undefined;
+    }, 1000);
+}
+
 function reportCacheMissIfStorageHasValue(key: OnyxKey): void {
-    if (!cache.getAllKeys().has(key) || OnyxKeys.isRamOnlyKey(key) || cache.hasNullishStorageKey(key)) {
+    if (!cache.getAllKeys().has(key)) {
+        if (qaSyncRemovedKeys.has(key)) {
+            qaNoteDiagnosticSkip(key);
+        }
+        return;
+    }
+    if (OnyxKeys.isRamOnlyKey(key) || cache.hasNullishStorageKey(key)) {
         return;
     }
 
@@ -248,10 +279,21 @@ class OnyxSubscriptionManager {
     resetCacheMissReports(): void {
         reportedCacheMisses.clear();
         qaErasures.clear();
+        qaSyncRemovedKeys.clear();
+        qaSkipLogged.clear();
     }
 
     qaRecordErasure(key: OnyxKey, pendingLocalWrites: number, erasedValue: unknown): void {
         qaRecordErasure(key, pendingLocalWrites, erasedValue);
+    }
+
+    qaRecordSyncRemoval(key: OnyxKey): void {
+        qaSyncRemovedKeys.add(key);
+        qaSkipLogged.delete(key);
+    }
+
+    qaForgetSyncRemoval(key: OnyxKey): void {
+        qaSyncRemovedKeys.delete(key);
     }
 
     /**
