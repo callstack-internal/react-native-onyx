@@ -4,6 +4,7 @@ import {useCallback, useEffect, useMemo, useRef, useSyncExternalStore} from 'rea
 import type {CollectionKeyBase, KeyValueMapping, OnyxCollection, OnyxKey, OnyxValue} from './types';
 
 import onyxSubscriptionManager from './OnyxSubscriptionManager';
+import {areSameValues, getSharedResult, setSharedResult} from './sharedResults';
 import OnyxUtils from './OnyxUtils';
 
 /**
@@ -215,18 +216,30 @@ function useOnyxState<T, const TDependencies extends readonly OnyxKey[]>(selecto
         }
 
         const depValues = depsArray.map((dep) => onyxSubscriptionManager.getState(dep));
-        previousStateReadRef.current = false;
-        // The views carry every key at runtime; the narrowing is a constraint on what a selector may
-        // read, so hand them over as the declared shape.
-        const output = selector(liveStateView as OnyxStateViewFor<TDependencies>, previousView as OnyxStateViewFor<TDependencies> | undefined);
-        const readPreviousState = previousStateReadRef.current;
+
+        // Shared by stable selectors only. A run that read `previousState`, or saw it missing, depends on its own instance.
+        const hadPreviousView = previousView !== undefined;
+        const shared = getSharedResult(selector);
+        let output: T;
+        let readPreviousState: boolean;
+        if (shared && !shared.readPreviousState && shared.hadPreviousView === hadPreviousView && shared.depsKey === depsKey && areSameValues(shared.depValues, depValues)) {
+            output = shared.value as T;
+            readPreviousState = false;
+        } else {
+            previousStateReadRef.current = false;
+            // The views carry every key at runtime; the narrowing is a constraint on what a selector may
+            // read, so hand them over as the declared shape.
+            output = selector(liveStateView as OnyxStateViewFor<TDependencies>, previousView as OnyxStateViewFor<TDependencies> | undefined);
+            readPreviousState = previousStateReadRef.current;
+            setSharedResult(selector, {depsKey, depValues, value: output, readPreviousState, hadPreviousView});
+        }
 
         // Hand back the previous reference when the output is equal, so React bails out via `===`
         // and an unchanged store keeps returning the same value even as `getSnapshot`'s identity moves.
         const value = lastSnapshot !== null && selectorEquality(lastSnapshot.value, output) ? lastSnapshot.value : output;
         lastSnapshotRef.current = {value, selector, previousView, readPreviousState, depValues};
         return value;
-    }, [selector, selectorEquality, depsArray]);
+    }, [selector, selectorEquality, depsArray, depsKey]);
 
     const value = useSyncExternalStore(subscribe, getSnapshot);
 
@@ -250,4 +263,4 @@ function useOnyxState<T, const TDependencies extends readonly OnyxKey[]>(selecto
 }
 
 export default useOnyxState;
-export type {OnyxStateView, UseOnyxStateOptions, UseOnyxStateSelector};
+export type {OnyxStateView, OnyxStateViewFor, UseOnyxStateOptions, UseOnyxStateSelector};
