@@ -34,6 +34,7 @@ import PendingWrites from './PendingWrites';
 import logMessages from './logMessages';
 import onyxSubscriptionManager from './OnyxSubscriptionManager';
 import OnyxMerge from './OnyxMerge';
+import {clearSharedResults} from './sharedResults';
 
 /** Initialize the store with actions and listening for storage events */
 function init({
@@ -439,6 +440,7 @@ function clear(keysToPreserve: OnyxKey[] = []): Promise<void> {
 
     const clearPromise = PendingWrites.trackPendingGlobalWrite(
         OnyxUtils.afterInit(() => {
+            clearSharedResults();
             const pendingMergeEntries = OnyxUtils.getPendingMergeEntries(keysToPreserve);
             const defaultKeyStates = OnyxUtils.getDefaultKeyStates();
             const initialKeys = Object.keys(defaultKeyStates);

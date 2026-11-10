@@ -303,6 +303,105 @@ describe('useOnyxState', () => {
         });
     });
 
+    describe('sharing results between instances', () => {
+        it('should run a stable selector once per change for every instance that mounts it', async () => {
+            // Given three components that mount the same module-level selector
+            const selectTestValue = jest.fn((state: OnyxStateView) => `${state[ONYXKEYS.TEST_KEY] as string}!`);
+            await Onyx.set(ONYXKEYS.TEST_KEY, 'first');
+            const hooks = [1, 2, 3].map(() => renderHook(() => useOnyxState(selectTestValue, {dependencies: [ONYXKEYS.TEST_KEY]})));
+            await act(async () => waitForPromisesToResolve());
+            selectTestValue.mockClear();
+
+            // When the dependency changes
+            await act(async () => Onyx.set(ONYXKEYS.TEST_KEY, 'second'));
+
+            // Then the selector runs once and every instance gets its result
+            expect(selectTestValue).toHaveBeenCalledTimes(1);
+            for (const {result} of hooks) {
+                expect(result.current).toEqual('second!');
+            }
+        });
+
+        it('should still run an inline selector in every instance', async () => {
+            // Given three components that each pass their own inline selector
+            const runs = jest.fn();
+            await Onyx.set(ONYXKEYS.TEST_KEY, 'first');
+            for (let index = 0; index < 3; index++) {
+                renderHook(() =>
+                    useOnyxState(
+                        (state) => {
+                            runs();
+                            return state[ONYXKEYS.TEST_KEY];
+                        },
+                        {dependencies: [ONYXKEYS.TEST_KEY]},
+                    ),
+                );
+            }
+            await act(async () => waitForPromisesToResolve());
+            runs.mockClear();
+
+            // When the dependency changes
+            await act(async () => Onyx.set(ONYXKEYS.TEST_KEY, 'second'));
+
+            // Then nothing identifies the three selectors as the same, so each instance runs its own
+            expect(runs.mock.calls.length).toBeGreaterThanOrEqual(3);
+        });
+
+        it('should not share a stable selector between different dependency lists', async () => {
+            // Given the same selector mounted over two different dependency lists
+            const selectBoth = jest.fn((state: OnyxStateView) => `${state[ONYXKEYS.TEST_KEY] as string}|${state[ONYXKEYS.OTHER_TEST] as string}`);
+            await Onyx.set(ONYXKEYS.TEST_KEY, 'a');
+            await Onyx.set(ONYXKEYS.OTHER_TEST, 'x');
+            const narrow = renderHook(() => useOnyxState(selectBoth, {dependencies: [ONYXKEYS.TEST_KEY]}));
+            const wide = renderHook(() => useOnyxState(selectBoth, {dependencies: [ONYXKEYS.TEST_KEY, ONYXKEYS.OTHER_TEST]}));
+            await act(async () => waitForPromisesToResolve());
+
+            // When only the key the wider list declares changes
+            await act(async () => Onyx.set(ONYXKEYS.OTHER_TEST, 'y'));
+
+            // Then the wider one sees the change, and the narrower one keeps what its own deps produced
+            expect(wide.result.current).toEqual('a|y');
+            expect(narrow.result.current).toEqual('a|x');
+        });
+
+        it('should not share the result of a run that read previousState', async () => {
+            // Given two components that mount the same selector, which reads previousState
+            const selectChange = jest.fn(
+                (state: OnyxStateView, previousState: OnyxStateView | undefined) => `${previousState?.[ONYXKEYS.TEST_KEY] as string}->${state[ONYXKEYS.TEST_KEY] as string}`,
+            );
+            await Onyx.set(ONYXKEYS.TEST_KEY, 'first');
+            renderHook(() => useOnyxState(selectChange, {dependencies: [ONYXKEYS.TEST_KEY]}));
+            renderHook(() => useOnyxState(selectChange, {dependencies: [ONYXKEYS.TEST_KEY]}));
+            await act(async () => waitForPromisesToResolve());
+            selectChange.mockClear();
+
+            // When the dependency changes
+            await act(async () => Onyx.set(ONYXKEYS.TEST_KEY, 'second'));
+
+            // Then each instance runs it against its own previous state
+            expect(selectChange).toHaveBeenCalledTimes(2);
+        });
+
+        it('should not hand a run made without previousState to an instance that has one', async () => {
+            // Given a selector that reads previousState, mounted in A, which has seen a change
+            const selectChange = (state: OnyxStateView, previousState: OnyxStateView | undefined) => `${previousState?.[ONYXKEYS.TEST_KEY] as string}->${state[ONYXKEYS.TEST_KEY] as string}`;
+            await Onyx.set(ONYXKEYS.TEST_KEY, 'first');
+            const a = renderHook(() => useOnyxState(selectChange, {dependencies: [ONYXKEYS.TEST_KEY]}));
+            await act(async () => waitForPromisesToResolve());
+            await act(async () => Onyx.set(ONYXKEYS.TEST_KEY, 'second'));
+
+            // When B mounts with no previousState yet, and A re-renders
+            const b = renderHook(() => useOnyxState(selectChange, {dependencies: [ONYXKEYS.TEST_KEY]}));
+            await act(async () => waitForPromisesToResolve());
+            a.rerender({});
+            await act(async () => waitForPromisesToResolve());
+
+            // Then A still diffs against its own previous state instead of taking B's result
+            expect(b.result.current).toEqual('undefined->second');
+            expect(a.result.current).toEqual('second->second');
+        });
+    });
+
     describe('before Onyx.init has finished', () => {
         // Providers above the app's migration gate subscribe during a cold start, before the cache has
         // been hydrated, so put Onyx back to "not initialised" for these.
