@@ -22,10 +22,12 @@ import type {FetchStatus, ResultMetadata, UseOnyxResult, UseOnyxOptions} from '.
 import useOnyx from './useOnyx';
 import type {OnyxStateView, UseOnyxStateOptions, UseOnyxStateSelector} from './useOnyxState';
 import useOnyxState from './useOnyxState';
+import type {CreateDerivedValueOptions, DerivedValue, DerivedValuePrevious} from './createDerivedValue';
+import createDerivedValue from './createDerivedValue';
 import type {OnyxSQLiteKeyValuePair} from './storage/providers/SQLiteProvider';
 
 export default Onyx;
-export {useOnyx, useOnyxState};
+export {useOnyx, useOnyxState, createDerivedValue};
 export type {
     ConnectOptions,
     CustomTypeOptions,
@@ -53,5 +55,8 @@ export type {
     OnyxStateView,
     UseOnyxStateOptions,
     UseOnyxStateSelector,
+    CreateDerivedValueOptions,
+    DerivedValue,
+    DerivedValuePrevious,
     OnyxSQLiteKeyValuePair,
 };
