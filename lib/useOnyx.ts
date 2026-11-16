@@ -8,6 +8,7 @@ import type {OnyxKey, OnyxValue} from './types';
 import cache from './OnyxCache';
 import onyxSubscriptionManager from './OnyxSubscriptionManager';
 import OnyxUtils from './OnyxUtils';
+import * as SelectorStats from './selectorStats';
 
 type UseOnyxSelector<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>> = (data: OnyxValue<TKey> | undefined) => TReturnValue;
 
@@ -17,6 +18,12 @@ type UseOnyxOptions<TKey extends OnyxKey, TReturnValue> = {
      * equality, so an inline selector that allocates fresh objects/arrays each render is safe.
      */
     selector?: UseOnyxSelector<TKey, TReturnValue>;
+
+    /**
+     * Prototype (expensify-issues#3044): compares the previous and next selector output. Defaults to
+     * deep equality. Only used when a selector is set. Pass a stable function, not an inline one.
+     */
+    equality?: (a: TReturnValue | undefined, b: TReturnValue | undefined) => boolean;
 };
 
 /**
@@ -93,10 +100,32 @@ function useOnyx<TKey extends OnyxKey, TReturnValue = OnyxValue<TKey>>(key: TKey
     );
     const getSnapshot = useCallback(() => onyxSubscriptionManager.getState(key) as OnyxValue<TKey> | undefined, [key]);
 
-    const select = useCallback((data: OnyxValue<TKey> | undefined): TReturnValue | undefined => (selector ? selector(data) : (data as TReturnValue | undefined)) ?? undefined, [selector]);
+    // Measurement-only (expensify-issues#3041): per-instance state for selector stats.
+    const statsStateRef = useRef<SelectorStats.InstanceState | null>(null);
+    if (statsStateRef.current === null) {
+        statsStateRef.current = SelectorStats.createInstanceState();
+    }
+    const statsState = statsStateRef.current;
+    const isMeasuring = !!selector && SelectorStats.isEnabled();
+
+    const select = useCallback(
+        (data: OnyxValue<TKey> | undefined): TReturnValue | undefined => {
+            if (!selector) {
+                return (data as TReturnValue | undefined) ?? undefined;
+            }
+            return (isMeasuring ? SelectorStats.measureSelect(key, selector, statsState, data) : selector(data)) ?? undefined;
+        },
+        [selector, isMeasuring, key, statsState],
+    );
 
     // Deep-equal only with a selector (its output may be freshly allocated); raw values are ref-stable.
-    const isEqual = selector ? deepEqual : undefined;
+    const equality = options?.equality ?? deepEqual;
+    const measuredEqual = useCallback(
+        (a: TReturnValue | undefined, b: TReturnValue | undefined) => SelectorStats.measureEqual(key, selector as (...args: never[]) => unknown, equality, a, b),
+        [key, selector, equality],
+    );
+    // eslint-disable-next-line no-nested-ternary
+    const isEqual = selector ? (isMeasuring ? measuredEqual : equality) : undefined;
 
     const value = useSyncExternalStoreWithSelector<OnyxValue<TKey> | undefined, TReturnValue | undefined>(subscribe, getSnapshot, undefined, select, isEqual);
 
